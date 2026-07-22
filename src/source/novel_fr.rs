@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -155,6 +156,7 @@ fn parse_chapters(document: &Html) -> Vec<Chapter> {
     let num_selector = Selector::parse(".epl-num").expect("valid selector");
     let title_selector = Selector::parse(".epl-title").expect("valid selector");
     let date_selector = Selector::parse(".epl-date").expect("valid selector");
+    let mut seen_numbers = HashSet::new();
     let mut chapters = document
         .select(&item_selector)
         .filter_map(|link| {
@@ -172,6 +174,12 @@ fn parse_chapters(document: &Html) -> Vec<Chapter> {
             let number = chapter_number(&label)
                 .or_else(|| chapter_number(&suffix))
                 .or_else(|| chapter_number(&key));
+            if let Some(number) = number {
+                let number_key = (number * 1000.0).round() as i64;
+                if !seen_numbers.insert(number_key) {
+                    return None;
+                }
+            }
             let title = match (number, suffix.is_empty()) {
                 (Some(number), false) => format!("Chapitre {} · {suffix}", format_number(number)),
                 (Some(number), true) => format!("Chapitre {}", format_number(number)),

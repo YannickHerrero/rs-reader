@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -60,6 +61,21 @@ impl LibraryRepository {
                 now,
             ],
         )?;
+        let fresh_chapter_keys = series
+            .chapters
+            .iter()
+            .map(|chapter| chapter.key.as_str())
+            .collect::<HashSet<_>>();
+        let mut existing_chapters = tx.prepare("select key from chapters where series_key = ?1")?;
+        let stale_chapter_keys = existing_chapters
+            .query_map(params![series.key], |row| row.get::<_, String>(0))?
+            .filter_map(|key| key.ok())
+            .filter(|key| !fresh_chapter_keys.contains(key.as_str()))
+            .collect::<Vec<_>>();
+        drop(existing_chapters);
+        for key in stale_chapter_keys {
+            tx.execute("delete from chapters where key = ?1", params![key])?;
+        }
         for chapter in &series.chapters {
             tx.execute(
                 "insert into chapters (key, series_key, title, number, published_at, position)
