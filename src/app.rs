@@ -93,6 +93,7 @@ pub struct App {
     selected_library: usize,
     search_query: String,
     search_results: Vec<SearchResult>,
+    search_showing_recommendations: bool,
     selected_search: usize,
     current_series: Option<LibrarySeries>,
     series_view: SeriesView,
@@ -129,6 +130,7 @@ impl App {
             selected_library: 0,
             search_query: String::new(),
             search_results: Vec::new(),
+            search_showing_recommendations: false,
             selected_search: 0,
             current_series: None,
             series_view: SeriesView::Chapters,
@@ -279,8 +281,13 @@ impl App {
                 };
                 ListItem::new(format!("{marker}{}", result.title))
             });
+        let title = if self.search_showing_recommendations && self.search_query.is_empty() {
+            "Top recommendations"
+        } else {
+            "Results"
+        };
         frame.render_widget(
-            List::new(items).block(Block::default().borders(Borders::ALL).title("Results")),
+            List::new(items).block(Block::default().borders(Borders::ALL).title(title)),
             chunks[1],
         );
     }
@@ -478,10 +485,7 @@ impl App {
     async fn handle_library_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
-            KeyCode::Char('/') | KeyCode::Char('s') => {
-                self.screen = Screen::Search;
-                self.status.clear();
-            }
+            KeyCode::Char('/') | KeyCode::Char('s') => self.open_search().await?,
             KeyCode::Char('r') => self.reload_library()?,
             KeyCode::Down | KeyCode::Char('j') => {
                 move_down(&mut self.selected_library, self.library.len())
@@ -498,6 +502,9 @@ impl App {
             KeyCode::Esc => self.screen = Screen::Library,
             KeyCode::Backspace => {
                 self.search_query.pop();
+                if self.search_query.is_empty() {
+                    self.load_recommendations().await?;
+                }
             }
             KeyCode::Char('A') if !self.search_results.is_empty() => {
                 self.add_selected_search_result().await?
@@ -505,7 +512,10 @@ impl App {
             KeyCode::Enter => self.run_search().await?,
             KeyCode::Down => move_down(&mut self.selected_search, self.search_results.len()),
             KeyCode::Up => move_up(&mut self.selected_search),
-            KeyCode::Char(ch) => self.search_query.push(ch),
+            KeyCode::Char(ch) => {
+                self.search_query.push(ch);
+                self.search_showing_recommendations = false;
+            }
             _ => {}
         }
         Ok(())
@@ -563,6 +573,24 @@ impl App {
         Ok(())
     }
 
+    async fn open_search(&mut self) -> Result<()> {
+        self.screen = Screen::Search;
+        self.status.clear();
+        if self.search_query.is_empty() {
+            self.load_recommendations().await?;
+        }
+        Ok(())
+    }
+
+    async fn load_recommendations(&mut self) -> Result<()> {
+        self.status = "Loading top recommendations...".to_string();
+        self.search_results = self.source.recommendations().await?;
+        self.selected_search = 0;
+        self.search_showing_recommendations = true;
+        self.status = format!("Loaded {} recommendation(s).", self.search_results.len());
+        Ok(())
+    }
+
     fn move_series_selection_down(&mut self) {
         match self.series_view {
             SeriesView::Volumes => move_down(&mut self.selected_volume, self.volumes.len()),
@@ -604,11 +632,12 @@ impl App {
     async fn run_search(&mut self) -> Result<()> {
         let query = self.search_query.trim();
         if query.is_empty() {
-            self.status = "Enter a search query first.".to_string();
+            self.load_recommendations().await?;
             return Ok(());
         }
         self.status = format!("Searching for {query}...");
         self.search_results = self.source.search(query).await?;
+        self.search_showing_recommendations = false;
         self.selected_search = 0;
         self.status = format!("Found {} result(s).", self.search_results.len());
         Ok(())

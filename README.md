@@ -37,7 +37,7 @@ The library is stored in SQLite under the platform data directory, e.g. `~/.loca
 
 ```text
 Library:  Enter open · / search · r refresh · q quit
-Search:   type query · Enter search · ↑/↓ select · A add/open · Esc back
+Search:   empty query shows recommendations · Enter search · ↑/↓ select · A add/open · Esc back
 Volumes:  Enter open volume · h hide/show read · o sort newest/oldest · r refresh metadata · Esc back
 Chapters: Enter read · h hide/show read · o sort newest/oldest · Esc back
 Reader:   Tab mode · Space next unit · j/k move · PgUp/PgDn · g/G top/bottom · n/p chapter · Esc back

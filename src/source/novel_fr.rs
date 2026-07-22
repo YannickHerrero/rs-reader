@@ -37,6 +37,12 @@ impl NovelFrSource {
         })
     }
 
+    pub async fn recommendations(&self) -> Result<Vec<SearchResult>> {
+        let url = Url::parse(BASE_URL)?.join("/series/?status=&type=&order=popular")?;
+        let html = self.request_text(url).await?;
+        Ok(parse_recommendations(&Html::parse_document(&html)))
+    }
+
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
         let mut url = Url::parse(BASE_URL)?.join("/wp-json/wp/v2/search")?;
         url.query_pairs_mut()
@@ -149,6 +155,33 @@ impl NovelFrSource {
         }
         *next = Instant::now() + Duration::from_millis(500);
     }
+}
+
+fn parse_recommendations(document: &Html) -> Vec<SearchResult> {
+    let article_selector = Selector::parse(".listupd article").expect("valid selector");
+    let link_selector = Selector::parse("h2 a, .mdthumb a").expect("valid selector");
+    let mut seen = HashSet::new();
+
+    document
+        .select(&article_selector)
+        .filter_map(|article| {
+            let link = article.select(&link_selector).next()?;
+            let key = source_key(link.value().attr("href")?)?;
+            if !seen.insert(key.clone()) {
+                return None;
+            }
+            let title = clean_text(&link.text().collect::<Vec<_>>().join(" "));
+            let title = if title.is_empty() {
+                link.value()
+                    .attr("title")
+                    .map(clean_text)
+                    .unwrap_or_default()
+            } else {
+                title
+            };
+            (!title.is_empty()).then_some(SearchResult { key, title })
+        })
+        .collect()
 }
 
 fn parse_chapters(document: &Html) -> Vec<Chapter> {
