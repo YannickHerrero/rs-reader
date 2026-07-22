@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io;
 use std::time::Duration;
@@ -22,6 +23,28 @@ enum Screen {
     Reader,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChapterSort {
+    NewestFirst,
+    OldestFirst,
+}
+
+impl ChapterSort {
+    fn label(self) -> &'static str {
+        match self {
+            Self::NewestFirst => "newest first",
+            Self::OldestFirst => "oldest first",
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            Self::NewestFirst => Self::OldestFirst,
+            Self::OldestFirst => Self::NewestFirst,
+        }
+    }
+}
+
 pub struct App {
     repo: LibraryRepository,
     source: NovelFrSource,
@@ -34,6 +57,7 @@ pub struct App {
     selected_search: usize,
     current_series: Option<LibrarySeries>,
     chapters: Vec<LibraryChapter>,
+    chapter_sort: ChapterSort,
     chapter_progress: HashMap<String, Progress>,
     selected_chapter: usize,
     reader_title: String,
@@ -59,6 +83,7 @@ impl App {
             selected_search: 0,
             current_series: None,
             chapters: Vec::new(),
+            chapter_sort: ChapterSort::NewestFirst,
             chapter_progress: HashMap::new(),
             selected_chapter: 0,
             reader_title: String::new(),
@@ -116,7 +141,7 @@ impl App {
         let help = match self.screen {
             Screen::Library => "Enter open · / search · r refresh · q quit",
             Screen::Search => "Type query · Enter search · A add/open · Esc back",
-            Screen::Series => "Enter read · r refresh metadata · Esc back",
+            Screen::Series => "Enter read · o sort newest/oldest · r refresh metadata · Esc back",
             Screen::Reader => "j/k scroll · PgUp/PgDn · g/G · n/p chapter · Esc back",
         };
         frame.render_widget(
@@ -196,8 +221,8 @@ impl App {
         let title = self
             .current_series
             .as_ref()
-            .map(|series| series.title.as_str())
-            .unwrap_or("Chapters");
+            .map(|series| format!("{} ({})", series.title, self.chapter_sort.label()))
+            .unwrap_or_else(|| format!("Chapters ({})", self.chapter_sort.label()));
         let items = self.chapters.iter().enumerate().map(|(index, chapter)| {
             let marker = if index == self.selected_chapter {
                 ">"
@@ -209,10 +234,13 @@ impl App {
                 .get(&chapter.key)
                 .map(|progress| if progress.completed { "✓" } else { "…" })
                 .unwrap_or(" ");
-            ListItem::new(format!("{marker} {state} {}", chapter.title))
+            ListItem::new(format!(
+                "{marker} {state} {}",
+                chapter_display_title(chapter)
+            ))
         });
         frame.render_widget(
-            List::new(items).block(Block::default().borders(Borders::ALL).title(title)),
+            List::new(items).block(Block::default().borders(Borders::ALL).title(title.as_str())),
             area,
         );
     }
@@ -293,6 +321,7 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') => move_up(&mut self.selected_chapter),
             KeyCode::Enter => self.open_selected_chapter().await?,
+            KeyCode::Char('o') => self.toggle_chapter_sort(),
             KeyCode::Char('r') => self.refresh_current_series().await?,
             _ => {}
         }
@@ -369,19 +398,55 @@ impl App {
     }
 
     fn open_current_series(&mut self) -> Result<()> {
-        let Some(series) = &self.current_series else {
+        let Some(series_key) = self
+            .current_series
+            .as_ref()
+            .map(|series| series.key.clone())
+        else {
             return Ok(());
         };
-        self.chapters = self.repo.chapters(&series.key)?;
+        self.chapters = self.repo.chapters(&series_key)?;
+        self.sort_chapters(None);
         self.chapter_progress = self
             .repo
-            .progress_for_series(&series.key)?
+            .progress_for_series(&series_key)?
             .into_iter()
             .map(|progress| (progress.chapter_key.clone(), progress))
             .collect();
         clamp_index(&mut self.selected_chapter, self.chapters.len());
         self.screen = Screen::Series;
         Ok(())
+    }
+
+    fn toggle_chapter_sort(&mut self) {
+        let selected_key = self
+            .chapters
+            .get(self.selected_chapter)
+            .map(|chapter| chapter.key.clone());
+        self.chapter_sort = self.chapter_sort.toggled();
+        self.sort_chapters(selected_key.as_deref());
+        self.status = format!("Sorted chapters {}.", self.chapter_sort.label());
+    }
+
+    fn sort_chapters(&mut self, selected_key: Option<&str>) {
+        self.chapters.sort_by(|left, right| {
+            let number_order =
+                compare_chapters_by_number(left.number, right.number, self.chapter_sort);
+            number_order.then_with(|| match self.chapter_sort {
+                ChapterSort::NewestFirst => left.position.cmp(&right.position),
+                ChapterSort::OldestFirst => right.position.cmp(&left.position),
+            })
+        });
+        if let Some(selected_key) = selected_key {
+            if let Some(index) = self
+                .chapters
+                .iter()
+                .position(|chapter| chapter.key == selected_key)
+            {
+                self.selected_chapter = index;
+            }
+        }
+        clamp_index(&mut self.selected_chapter, self.chapters.len());
     }
 
     async fn refresh_current_series(&mut self) -> Result<()> {
@@ -470,6 +535,61 @@ impl App {
             ratio,
             ratio >= 0.95,
         )
+    }
+}
+
+fn chapter_display_title(chapter: &LibraryChapter) -> String {
+    let Some(number) = chapter.number else {
+        return chapter.title.clone();
+    };
+    let number = format_chapter_number(number);
+    let title = strip_existing_chapter_prefix(&chapter.title);
+    if title.is_empty() {
+        number
+    } else {
+        format!("{number}. {title}")
+    }
+}
+
+fn strip_existing_chapter_prefix(title: &str) -> &str {
+    let trimmed = title.trim();
+    let lower = trimmed.to_lowercase();
+    let Some(rest) = lower.strip_prefix("chapitre ") else {
+        return trimmed;
+    };
+    let consumed = rest
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_ascii_digit() || *ch == '.' || *ch == ',')
+        .last()
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    let original_rest = &trimmed["Chapitre ".len() + consumed..];
+    original_rest
+        .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '·' || ch == '-' || ch == ':')
+        .trim()
+}
+
+fn format_chapter_number(number: f64) -> String {
+    if number.fract() == 0.0 {
+        format!("{}", number as i64)
+    } else {
+        number.to_string()
+    }
+}
+
+fn compare_chapters_by_number(
+    left: Option<f64>,
+    right: Option<f64>,
+    sort: ChapterSort,
+) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => match sort {
+            ChapterSort::NewestFirst => right.partial_cmp(&left).unwrap_or(Ordering::Equal),
+            ChapterSort::OldestFirst => left.partial_cmp(&right).unwrap_or(Ordering::Equal),
+        },
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
     }
 }
 
