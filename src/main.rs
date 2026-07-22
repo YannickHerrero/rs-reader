@@ -1,3 +1,5 @@
+mod source;
+
 fn main() {
-    println!("Hello, world!");
+    println!("rs-reader: terminal UI coming next");
 }
