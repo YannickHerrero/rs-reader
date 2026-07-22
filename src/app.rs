@@ -98,7 +98,7 @@ impl App {
             selected_volume: 0,
             chapters: Vec::new(),
             all_chapters: Vec::new(),
-            chapter_sort: ChapterSort::NewestFirst,
+            chapter_sort: ChapterSort::OldestFirst,
             chapter_progress: HashMap::new(),
             selected_chapter: 0,
             chapter_view_offset: 0,
