@@ -397,12 +397,30 @@ impl App {
     }
 
     fn draw_reader(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
-        let (title, text) = match self.reader_mode {
+        let has_counter = self.reader_mode != ReaderMode::Normal;
+        let block = Block::default().borders(Borders::ALL).title(format!(
+            "{} · {}",
+            self.reader_title,
+            self.reader_mode.label()
+        ));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(if has_counter {
+                [Constraint::Min(1), Constraint::Length(1)]
+            } else {
+                [Constraint::Min(1), Constraint::Length(0)]
+            })
+            .split(inner);
+
+        let (text, counter) = match self.reader_mode {
             ReaderMode::Normal => {
-                let visible = area.height.saturating_sub(2) as usize;
+                let visible = chunks[0].height as usize;
                 let end = self.reader_lines.len().min(self.reader_scroll + visible);
                 let text = self.reader_lines[self.reader_scroll.min(end)..end].join("\n");
-                (format!("{} · normal", self.reader_title), text)
+                (text, None)
             }
             ReaderMode::Paragraph => {
                 let total = self.reader_paragraphs.len().max(1);
@@ -412,15 +430,7 @@ impl App {
                     .get(current)
                     .cloned()
                     .unwrap_or_default();
-                (
-                    format!(
-                        "{} · paragraph {}/{}",
-                        self.reader_title,
-                        current + 1,
-                        total
-                    ),
-                    text,
-                )
+                (text, Some(format!("paragraph {}/{}", current + 1, total)))
             }
             ReaderMode::Sentence => {
                 let total = self.reader_sentences.len().max(1);
@@ -430,18 +440,14 @@ impl App {
                     .get(current)
                     .cloned()
                     .unwrap_or_default();
-                (
-                    format!("{} · sentence {}/{}", self.reader_title, current + 1, total),
-                    text,
-                )
+                (text, Some(format!("sentence {}/{}", current + 1, total)))
             }
         };
-        frame.render_widget(
-            Paragraph::new(text)
-                .block(Block::default().borders(Borders::ALL).title(title))
-                .wrap(Wrap { trim: false }),
-            area,
-        );
+
+        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), chunks[0]);
+        if let Some(counter) = counter {
+            frame.render_widget(Paragraph::new(counter), chunks[1]);
+        }
     }
 
     async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
