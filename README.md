@@ -40,7 +40,7 @@ Library:  Enter open · / search · r refresh · q quit
 Search:   type query · Enter search · ↑/↓ select · A add/open · Esc back
 Volumes:  Enter open volume · o sort newest/oldest · r refresh metadata · Esc back
 Chapters: Enter read · o sort newest/oldest · Esc back
-Reader:   j/k scroll · PgUp/PgDn · g/G top/bottom · n/p chapter · Esc back
+Reader:   Tab mode · Space next unit · j/k move · PgUp/PgDn · g/G top/bottom · n/p chapter · Esc back
 ```
 
 This intentionally uses only one source and avoids browser automation, downloads, account sync, or image rendering.

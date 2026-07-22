@@ -35,6 +35,31 @@ enum SeriesView {
     Chapters,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReaderMode {
+    Normal,
+    Paragraph,
+    Sentence,
+}
+
+impl ReaderMode {
+    fn next(self) -> Self {
+        match self {
+            Self::Normal => Self::Paragraph,
+            Self::Paragraph => Self::Sentence,
+            Self::Sentence => Self::Normal,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Paragraph => "paragraph",
+            Self::Sentence => "sentence",
+        }
+    }
+}
+
 impl ChapterSort {
     fn label(self) -> &'static str {
         match self {
@@ -75,7 +100,11 @@ pub struct App {
     reader_series_key: String,
     reader_chapter_key: String,
     reader_lines: Vec<String>,
+    reader_paragraphs: Vec<String>,
+    reader_sentences: Vec<String>,
     reader_scroll: usize,
+    reader_unit_index: usize,
+    reader_mode: ReaderMode,
     status: String,
     should_quit: bool,
 }
@@ -106,7 +135,11 @@ impl App {
             reader_series_key: String::new(),
             reader_chapter_key: String::new(),
             reader_lines: Vec::new(),
+            reader_paragraphs: Vec::new(),
+            reader_sentences: Vec::new(),
             reader_scroll: 0,
+            reader_unit_index: 0,
+            reader_mode: ReaderMode::Normal,
             status: String::new(),
             should_quit: false,
         };
@@ -165,7 +198,7 @@ impl App {
                     "Enter read · o sort newest/oldest · r refresh metadata · Esc back"
                 }
             },
-            Screen::Reader => "j/k scroll · PgUp/PgDn · g/G · n/p chapter · Esc back",
+            Screen::Reader => "Tab mode · j/k move · PgUp/PgDn · g/G · n/p chapter · Esc back",
         };
         frame.render_widget(
             Paragraph::new(vec![Line::from(help), Line::from(self.status.as_str())]),
@@ -364,16 +397,48 @@ impl App {
     }
 
     fn draw_reader(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
-        let visible = area.height.saturating_sub(2) as usize;
-        let end = self.reader_lines.len().min(self.reader_scroll + visible);
-        let text = self.reader_lines[self.reader_scroll.min(end)..end].join("\n");
+        let (title, text) = match self.reader_mode {
+            ReaderMode::Normal => {
+                let visible = area.height.saturating_sub(2) as usize;
+                let end = self.reader_lines.len().min(self.reader_scroll + visible);
+                let text = self.reader_lines[self.reader_scroll.min(end)..end].join("\n");
+                (format!("{} · normal", self.reader_title), text)
+            }
+            ReaderMode::Paragraph => {
+                let total = self.reader_paragraphs.len().max(1);
+                let current = self.reader_unit_index.min(total - 1);
+                let text = self
+                    .reader_paragraphs
+                    .get(current)
+                    .cloned()
+                    .unwrap_or_default();
+                (
+                    format!(
+                        "{} · paragraph {}/{}",
+                        self.reader_title,
+                        current + 1,
+                        total
+                    ),
+                    text,
+                )
+            }
+            ReaderMode::Sentence => {
+                let total = self.reader_sentences.len().max(1);
+                let current = self.reader_unit_index.min(total - 1);
+                let text = self
+                    .reader_sentences
+                    .get(current)
+                    .cloned()
+                    .unwrap_or_default();
+                (
+                    format!("{} · sentence {}/{}", self.reader_title, current + 1, total),
+                    text,
+                )
+            }
+        };
         frame.render_widget(
             Paragraph::new(text)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(self.reader_title.as_str()),
-                )
+                .block(Block::default().borders(Borders::ALL).title(title))
                 .wrap(Wrap { trim: false }),
             area,
         );
@@ -456,14 +521,14 @@ impl App {
                 self.reload_chapter_progress()?;
                 self.screen = Screen::Series;
             }
-            KeyCode::Down | KeyCode::Char('j') => self.scroll_reader(1)?,
-            KeyCode::Up | KeyCode::Char('k') => self.scroll_reader(-1)?,
-            KeyCode::PageDown => self.scroll_reader(10)?,
-            KeyCode::PageUp => self.scroll_reader(-10)?,
-            KeyCode::Char('g') => self.set_reader_scroll(0)?,
-            KeyCode::Char('G') => {
-                self.set_reader_scroll(self.reader_lines.len().saturating_sub(1))?
-            }
+            KeyCode::Tab => self.cycle_reader_mode()?,
+            KeyCode::Char(' ') => self.move_reader(1)?,
+            KeyCode::Down | KeyCode::Char('j') => self.move_reader(1)?,
+            KeyCode::Up | KeyCode::Char('k') => self.move_reader(-1)?,
+            KeyCode::PageDown => self.move_reader(10)?,
+            KeyCode::PageUp => self.move_reader(-10)?,
+            KeyCode::Char('g') => self.move_reader_to_start()?,
+            KeyCode::Char('G') => self.move_reader_to_end()?,
             KeyCode::Char('n') => self.open_relative_chapter(1).await?,
             KeyCode::Char('p') => self.open_relative_chapter(-1).await?,
             _ => {}
@@ -694,12 +759,19 @@ impl App {
         self.reader_series_key = chapter.series_key.clone();
         self.reader_chapter_key = chapter.key.clone();
         self.reader_lines = text.lines().map(str::to_string).collect();
-        self.reader_scroll = self
-            .repo
-            .progress(&chapter.key)?
+        self.reader_paragraphs = split_paragraphs(&text);
+        self.reader_sentences = split_sentences(&text);
+        let saved_progress = self.repo.progress(&chapter.key)?;
+        self.reader_scroll = saved_progress
+            .as_ref()
             .map(|progress| progress.scroll_line.max(0) as usize)
             .unwrap_or(0)
             .min(self.reader_lines.len().saturating_sub(1));
+        let ratio = saved_progress
+            .as_ref()
+            .map(|progress| progress.scroll_ratio.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        self.reader_unit_index = unit_index_from_ratio(self.current_reader_units_len(), ratio);
         self.screen = Screen::Reader;
         self.status.clear();
         Ok(())
@@ -720,24 +792,73 @@ impl App {
         self.open_selected_chapter().await
     }
 
-    fn scroll_reader(&mut self, delta: isize) -> Result<()> {
-        let next = (self.reader_scroll as isize + delta)
-            .clamp(0, self.reader_lines.len().saturating_sub(1) as isize)
-            as usize;
-        self.set_reader_scroll(next)
+    fn cycle_reader_mode(&mut self) -> Result<()> {
+        let ratio = self.current_reader_ratio();
+        self.reader_mode = self.reader_mode.next();
+        self.reader_unit_index = unit_index_from_ratio(self.current_reader_units_len(), ratio);
+        self.reader_scroll = unit_index_from_ratio(self.reader_lines.len(), ratio);
+        self.status = format!("Reader mode: {}.", self.reader_mode.label());
+        self.save_reader_progress()
+    }
+
+    fn move_reader(&mut self, delta: isize) -> Result<()> {
+        match self.reader_mode {
+            ReaderMode::Normal => {
+                let max = self.reader_lines.len().saturating_sub(1) as isize;
+                self.set_reader_scroll((self.reader_scroll as isize + delta).clamp(0, max) as usize)
+            }
+            ReaderMode::Paragraph | ReaderMode::Sentence => {
+                let max = self.current_reader_units_len().saturating_sub(1) as isize;
+                self.reader_unit_index =
+                    (self.reader_unit_index as isize + delta).clamp(0, max) as usize;
+                self.reader_scroll =
+                    unit_index_from_ratio(self.reader_lines.len(), self.current_reader_ratio());
+                self.save_reader_progress()
+            }
+        }
+    }
+
+    fn move_reader_to_start(&mut self) -> Result<()> {
+        self.reader_scroll = 0;
+        self.reader_unit_index = 0;
+        self.save_reader_progress()
+    }
+
+    fn move_reader_to_end(&mut self) -> Result<()> {
+        self.reader_scroll = self.reader_lines.len().saturating_sub(1);
+        self.reader_unit_index = self.current_reader_units_len().saturating_sub(1);
+        self.save_reader_progress()
     }
 
     fn set_reader_scroll(&mut self, scroll: usize) -> Result<()> {
-        self.reader_scroll = scroll;
+        self.reader_scroll = scroll.min(self.reader_lines.len().saturating_sub(1));
+        self.reader_unit_index =
+            unit_index_from_ratio(self.current_reader_units_len(), self.current_reader_ratio());
         self.save_reader_progress()
+    }
+
+    fn current_reader_units_len(&self) -> usize {
+        match self.reader_mode {
+            ReaderMode::Normal => self.reader_lines.len(),
+            ReaderMode::Paragraph => self.reader_paragraphs.len(),
+            ReaderMode::Sentence => self.reader_sentences.len(),
+        }
+    }
+
+    fn current_reader_ratio(&self) -> f64 {
+        match self.reader_mode {
+            ReaderMode::Normal => ratio_for_index(self.reader_scroll, self.reader_lines.len()),
+            ReaderMode::Paragraph | ReaderMode::Sentence => {
+                ratio_for_index(self.reader_unit_index, self.current_reader_units_len())
+            }
+        }
     }
 
     fn save_reader_progress(&self) -> Result<()> {
         if self.reader_chapter_key.is_empty() || self.reader_lines.is_empty() {
             return Ok(());
         }
-        let max = self.reader_lines.len().saturating_sub(1).max(1);
-        let ratio = self.reader_scroll as f64 / max as f64;
+        let ratio = self.current_reader_ratio();
         self.repo.save_progress(
             &self.reader_series_key,
             &self.reader_chapter_key,
@@ -746,6 +867,62 @@ impl App {
             ratio >= 0.95,
         )
     }
+}
+
+fn split_paragraphs(text: &str) -> Vec<String> {
+    let paragraphs = text
+        .split("\n\n")
+        .map(|paragraph| paragraph.trim())
+        .filter(|paragraph| !paragraph.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if paragraphs.is_empty() {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        paragraphs
+    }
+}
+
+fn split_sentences(text: &str) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '!' | '?' | '…') {
+            let sentence = current.trim();
+            if !sentence.is_empty() {
+                sentences.push(sentence.to_string());
+            }
+            current.clear();
+        }
+    }
+    let rest = current.trim();
+    if !rest.is_empty() {
+        sentences.push(rest.to_string());
+    }
+    if sentences.is_empty() {
+        split_paragraphs(text)
+    } else {
+        sentences
+    }
+}
+
+fn ratio_for_index(index: usize, len: usize) -> f64 {
+    let max = len.saturating_sub(1);
+    if max == 0 {
+        1.0
+    } else {
+        index.min(max) as f64 / max as f64
+    }
+}
+
+fn unit_index_from_ratio(len: usize, ratio: f64) -> usize {
+    let max = len.saturating_sub(1);
+    ((ratio.clamp(0.0, 1.0) * max as f64).round() as usize).min(max)
 }
 
 fn collect_volumes(chapters: &[LibraryChapter], sort: ChapterSort) -> Vec<Option<f64>> {
