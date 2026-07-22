@@ -208,7 +208,9 @@ impl App {
                     "Enter read · h hide/show read · o sort newest/oldest · r refresh metadata · Esc back"
                 }
             },
-            Screen::Reader => "Tab mode · j/k move · PgUp/PgDn · g/G · n/p chapter · Esc back",
+            Screen::Reader => {
+                "Tab mode · Space next · j/k move · PgUp/PgDn · g/G · n/p chapter · Esc back"
+            }
         };
         frame.render_widget(
             Paragraph::new(vec![Line::from(help), Line::from(self.status.as_str())]),
