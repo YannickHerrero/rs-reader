@@ -98,6 +98,7 @@ pub struct App {
     series_view: SeriesView,
     volumes: Vec<Option<f64>>,
     selected_volume: usize,
+    hide_completed_chapters: bool,
     chapters: Vec<LibraryChapter>,
     all_chapters: Vec<LibraryChapter>,
     chapter_sort: ChapterSort,
@@ -133,6 +134,7 @@ impl App {
             series_view: SeriesView::Chapters,
             volumes: Vec::new(),
             selected_volume: 0,
+            hide_completed_chapters: false,
             chapters: Vec::new(),
             all_chapters: Vec::new(),
             chapter_sort: ChapterSort::OldestFirst,
@@ -200,10 +202,10 @@ impl App {
             Screen::Search => "Type query · Enter search · A add/open · Esc back",
             Screen::Series => match self.series_view {
                 SeriesView::Volumes => {
-                    "Enter open volume · o sort newest/oldest · r refresh metadata · Esc back"
+                    "Enter open volume · h hide/show read · o sort newest/oldest · r refresh metadata · Esc back"
                 }
                 SeriesView::Chapters => {
-                    "Enter read · o sort newest/oldest · r refresh metadata · Esc back"
+                    "Enter read · h hide/show read · o sort newest/oldest · r refresh metadata · Esc back"
                 }
             },
             Screen::Reader => "Tab mode · j/k move · PgUp/PgDn · g/G · n/p chapter · Esc back",
@@ -373,12 +375,7 @@ impl App {
                 let chapters = self.chapters_for_volume(*volume);
                 let completed = chapters
                     .iter()
-                    .filter(|chapter| {
-                        self.chapter_progress
-                            .get(&chapter.key)
-                            .map(|progress| progress.completed)
-                            .unwrap_or(false)
-                    })
+                    .filter(|chapter| self.is_chapter_completed(&chapter.key))
                     .count();
                 let accent = if selected {
                     Style::default().add_modifier(Modifier::BOLD)
@@ -452,6 +449,11 @@ impl App {
             }
         };
 
+        let text = if text.is_empty() {
+            text
+        } else {
+            format!("\n{text}")
+        };
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), chunks[0]);
         if let Some(counter) = counter {
             frame.render_widget(Paragraph::new(counter), chunks[1]);
@@ -521,6 +523,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_series_selection_down(),
             KeyCode::Up | KeyCode::Char('k') => self.move_series_selection_up(),
             KeyCode::Enter => self.activate_series_selection().await?,
+            KeyCode::Char('h') => self.toggle_hide_completed_chapters(),
             KeyCode::Char('o') => self.toggle_chapter_sort(),
             KeyCode::Char('r') => self.refresh_current_series().await?,
             _ => {}
@@ -533,6 +536,14 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.save_reader_progress()?;
                 self.reload_chapter_progress()?;
+                if self.hide_completed_chapters && self.series_view == SeriesView::Chapters {
+                    if self.volumes.is_empty() {
+                        self.chapters = self.visible_chapters().into_iter().cloned().collect();
+                        self.sort_chapters(None);
+                    } else {
+                        self.open_selected_volume();
+                    }
+                }
                 self.screen = Screen::Series;
             }
             KeyCode::Tab => self.cycle_reader_mode()?,
@@ -631,18 +642,18 @@ impl App {
             return Ok(());
         };
         self.all_chapters = self.repo.chapters(&series_key)?;
+        self.reload_chapter_progress()?;
         self.volumes = collect_volumes(&self.all_chapters, self.chapter_sort);
         clamp_index(&mut self.selected_volume, self.volumes.len());
         if self.volumes.is_empty() {
             self.series_view = SeriesView::Chapters;
-            self.chapters = self.all_chapters.clone();
+            self.chapters = self.visible_chapters().into_iter().cloned().collect();
             self.sort_chapters(None);
         } else {
             self.series_view = SeriesView::Volumes;
             self.chapters.clear();
             self.chapter_view_offset = 0;
         }
-        self.reload_chapter_progress()?;
         clamp_index(&mut self.selected_chapter, self.chapters.len());
         self.screen = Screen::Series;
         Ok(())
@@ -665,6 +676,23 @@ impl App {
         Ok(())
     }
 
+    fn toggle_hide_completed_chapters(&mut self) {
+        self.hide_completed_chapters = !self.hide_completed_chapters;
+        if self.series_view == SeriesView::Chapters {
+            if self.volumes.is_empty() {
+                self.chapters = self.visible_chapters().into_iter().cloned().collect();
+                self.sort_chapters(None);
+            } else {
+                self.open_selected_volume();
+            }
+        }
+        self.status = if self.hide_completed_chapters {
+            "Hiding completed chapters.".to_string()
+        } else {
+            "Showing completed chapters.".to_string()
+        };
+    }
+
     fn toggle_chapter_sort(&mut self) {
         self.chapter_sort = self.chapter_sort.toggled();
         self.volumes = collect_volumes(&self.all_chapters, self.chapter_sort);
@@ -682,7 +710,9 @@ impl App {
         self.chapters = self
             .all_chapters
             .iter()
-            .filter(|chapter| same_volume(chapter.volume, volume))
+            .filter(|chapter| {
+                same_volume(chapter.volume, volume) && self.is_chapter_visible(chapter)
+            })
             .cloned()
             .collect();
         self.selected_chapter = 0;
@@ -694,8 +724,28 @@ impl App {
     fn chapters_for_volume(&self, volume: Option<f64>) -> Vec<&LibraryChapter> {
         self.all_chapters
             .iter()
-            .filter(|chapter| same_volume(chapter.volume, volume))
+            .filter(|chapter| {
+                same_volume(chapter.volume, volume) && self.is_chapter_visible(chapter)
+            })
             .collect()
+    }
+
+    fn visible_chapters(&self) -> Vec<&LibraryChapter> {
+        self.all_chapters
+            .iter()
+            .filter(|chapter| self.is_chapter_visible(chapter))
+            .collect()
+    }
+
+    fn is_chapter_visible(&self, chapter: &LibraryChapter) -> bool {
+        !self.hide_completed_chapters || !self.is_chapter_completed(&chapter.key)
+    }
+
+    fn is_chapter_completed(&self, chapter_key: &str) -> bool {
+        self.chapter_progress
+            .get(chapter_key)
+            .map(|progress| progress.completed)
+            .unwrap_or(false)
     }
 
     fn sort_chapters(&mut self, selected_key: Option<&str>) {
