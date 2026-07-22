@@ -31,6 +31,8 @@ pub struct Progress {
     pub scroll_line: i64,
     pub scroll_ratio: f64,
     pub completed: bool,
+    pub reader_mode: String,
+    pub reader_unit_index: i64,
     pub last_read_at: i64,
 }
 

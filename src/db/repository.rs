@@ -141,19 +141,23 @@ impl LibraryRepository {
         scroll_line: i64,
         scroll_ratio: f64,
         completed: bool,
+        reader_mode: &str,
+        reader_unit_index: i64,
     ) -> Result<()> {
         let previous_completed = self
             .progress(chapter_key)?
             .map(|progress| progress.completed)
             .unwrap_or(false);
         self.conn.execute(
-            "insert into progress (chapter_key, series_key, scroll_line, scroll_ratio, completed, last_read_at)
-             values (?1, ?2, ?3, ?4, ?5, ?6)
+            "insert into progress (chapter_key, series_key, scroll_line, scroll_ratio, completed, reader_mode, reader_unit_index, last_read_at)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              on conflict(chapter_key) do update set
                series_key = excluded.series_key,
                scroll_line = excluded.scroll_line,
                scroll_ratio = excluded.scroll_ratio,
                completed = excluded.completed,
+               reader_mode = excluded.reader_mode,
+               reader_unit_index = excluded.reader_unit_index,
                last_read_at = excluded.last_read_at",
             params![
                 chapter_key,
@@ -161,6 +165,8 @@ impl LibraryRepository {
                 scroll_line.max(0),
                 scroll_ratio.clamp(0.0, 1.0),
                 completed || previous_completed,
+                reader_mode,
+                reader_unit_index.max(0),
                 Utc::now().timestamp_millis(),
             ],
         )?;
@@ -170,7 +176,7 @@ impl LibraryRepository {
     pub fn progress(&self, chapter_key: &str) -> Result<Option<Progress>> {
         self.conn
             .query_row(
-                "select chapter_key, series_key, scroll_line, scroll_ratio, completed, last_read_at
+                "select chapter_key, series_key, scroll_line, scroll_ratio, completed, reader_mode, reader_unit_index, last_read_at
                  from progress where chapter_key = ?1",
                 params![chapter_key],
                 map_progress,
@@ -181,7 +187,7 @@ impl LibraryRepository {
 
     pub fn progress_for_series(&self, series_key: &str) -> Result<Vec<Progress>> {
         let mut stmt = self.conn.prepare(
-            "select chapter_key, series_key, scroll_line, scroll_ratio, completed, last_read_at
+            "select chapter_key, series_key, scroll_line, scroll_ratio, completed, reader_mode, reader_unit_index, last_read_at
              from progress where series_key = ?1",
         )?;
         let rows = stmt.query_map(params![series_key], map_progress)?;
@@ -280,6 +286,8 @@ impl LibraryRepository {
                scroll_line integer not null,
                scroll_ratio real not null,
                completed integer not null,
+               reader_mode text not null default 'normal',
+               reader_unit_index integer not null default 0,
                last_read_at integer not null
              );
              create index if not exists progress_series on progress(series_key);
@@ -294,6 +302,18 @@ impl LibraryRepository {
         if !self.column_exists("chapters", "volume")? {
             self.conn
                 .execute("alter table chapters add column volume real", [])?;
+        }
+        if !self.column_exists("progress", "reader_mode")? {
+            self.conn.execute(
+                "alter table progress add column reader_mode text not null default 'normal'",
+                [],
+            )?;
+        }
+        if !self.column_exists("progress", "reader_unit_index")? {
+            self.conn.execute(
+                "alter table progress add column reader_unit_index integer not null default 0",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -342,6 +362,8 @@ fn map_progress(row: &rusqlite::Row<'_>) -> rusqlite::Result<Progress> {
         scroll_line: row.get(2)?,
         scroll_ratio: row.get(3)?,
         completed: row.get(4)?,
-        last_read_at: row.get(5)?,
+        reader_mode: row.get(5)?,
+        reader_unit_index: row.get(6)?,
+        last_read_at: row.get(7)?,
     })
 }

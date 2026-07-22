@@ -58,6 +58,14 @@ impl ReaderMode {
             Self::Sentence => "sentence",
         }
     }
+
+    fn from_label(label: &str) -> Self {
+        match label {
+            "paragraph" => Self::Paragraph,
+            "sentence" => Self::Sentence,
+            _ => Self::Normal,
+        }
+    }
 }
 
 impl ChapterSort {
@@ -774,11 +782,19 @@ impl App {
             .map(|progress| progress.scroll_line.max(0) as usize)
             .unwrap_or(0)
             .min(self.reader_lines.len().saturating_sub(1));
+        self.reader_mode = saved_progress
+            .as_ref()
+            .map(|progress| ReaderMode::from_label(&progress.reader_mode))
+            .unwrap_or(ReaderMode::Normal);
         let ratio = saved_progress
             .as_ref()
             .map(|progress| progress.scroll_ratio.clamp(0.0, 1.0))
             .unwrap_or(0.0);
-        self.reader_unit_index = unit_index_from_ratio(self.current_reader_units_len(), ratio);
+        self.reader_unit_index = saved_progress
+            .as_ref()
+            .map(|progress| progress.reader_unit_index.max(0) as usize)
+            .unwrap_or_else(|| unit_index_from_ratio(self.current_reader_units_len(), ratio))
+            .min(self.current_reader_units_len().saturating_sub(1));
         self.screen = Screen::Reader;
         self.status.clear();
         Ok(())
@@ -872,6 +888,8 @@ impl App {
             self.reader_scroll as i64,
             ratio,
             ratio >= 0.95,
+            self.reader_mode.label(),
+            self.reader_unit_index as i64,
         )
     }
 }
