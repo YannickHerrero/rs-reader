@@ -174,6 +174,7 @@ fn parse_chapters(document: &Html) -> Vec<Chapter> {
             let number = chapter_number(&label)
                 .or_else(|| chapter_number(&suffix))
                 .or_else(|| chapter_number(&key));
+            let volume = volume_number(&label).or_else(|| volume_number(&suffix));
             if let Some(number) = number {
                 let number_key = (number * 1000.0).round() as i64;
                 if !seen_numbers.insert(number_key) {
@@ -195,6 +196,7 @@ fn parse_chapters(document: &Html) -> Vec<Chapter> {
                 key,
                 title,
                 number,
+                volume,
                 published_at,
                 position: 0,
             })
@@ -294,6 +296,18 @@ fn format_number(number: f64) -> String {
     }
 }
 
+fn volume_number(label: &str) -> Option<f64> {
+    let lower = label.to_lowercase().replace(',', ".");
+    ["volume", "vol.", "vol"]
+        .iter()
+        .filter_map(|marker| {
+            lower
+                .find(marker)
+                .map(|index| &lower[index + marker.len()..])
+        })
+        .find_map(first_decimal_number)
+}
+
 fn chapter_number(label: &str) -> Option<f64> {
     let lower = label.to_lowercase().replace(',', ".");
     ["chapitre", "chap.", "chap", "ch.", "ch", "chapter"]
@@ -334,6 +348,13 @@ mod tests {
         assert_eq!(chapter_number("Chapitre 12"), Some(12.0));
         assert_eq!(chapter_number("Chap. 10,5"), Some(10.5));
         assert_eq!(chapter_number("Ch. 42"), Some(42.0));
+        assert_eq!(chapter_number("Vol. 12 Ch. 532"), Some(532.0));
         assert_eq!(chapter_number("novelFr:/demo-chapitre-123/"), Some(123.0));
+    }
+
+    #[test]
+    fn parses_volume_numbers() {
+        assert_eq!(volume_number("Vol. 12 Ch. 532"), Some(12.0));
+        assert_eq!(volume_number("Volume 3 Chapitre 10"), Some(3.0));
     }
 }

@@ -18,6 +18,7 @@ pub struct LibraryChapter {
     pub series_key: String,
     pub title: String,
     pub number: Option<f64>,
+    pub volume: Option<f64>,
     pub published_at: Option<String>,
     pub position: i64,
 }

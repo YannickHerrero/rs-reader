@@ -78,12 +78,13 @@ impl LibraryRepository {
         }
         for chapter in &series.chapters {
             tx.execute(
-                "insert into chapters (key, series_key, title, number, published_at, position)
-                 values (?1, ?2, ?3, ?4, ?5, ?6)
+                "insert into chapters (key, series_key, title, number, volume, published_at, position)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  on conflict(key) do update set
                    series_key = excluded.series_key,
                    title = excluded.title,
                    number = excluded.number,
+                   volume = excluded.volume,
                    published_at = excluded.published_at,
                    position = excluded.position",
                 params![
@@ -91,6 +92,7 @@ impl LibraryRepository {
                     series.key,
                     chapter.title,
                     chapter.number,
+                    chapter.volume,
                     chapter.published_at,
                     chapter.position,
                 ],
@@ -124,7 +126,7 @@ impl LibraryRepository {
 
     pub fn chapters(&self, series_key: &str) -> Result<Vec<LibraryChapter>> {
         let mut stmt = self.conn.prepare(
-            "select key, series_key, title, number, published_at, position
+            "select key, series_key, title, number, volume, published_at, position
              from chapters where series_key = ?1 order by position asc",
         )?;
         let rows = stmt.query_map(params![series_key], map_chapter)?;
@@ -266,6 +268,7 @@ impl LibraryRepository {
                series_key text not null references series(key) on delete cascade,
                title text not null,
                number real,
+               volume real,
                published_at text,
                position integer not null
              );
@@ -288,7 +291,22 @@ impl LibraryRepository {
                fetched_at integer not null
              );",
         )?;
+        if !self.column_exists("chapters", "volume")? {
+            self.conn
+                .execute("alter table chapters add column volume real", [])?;
+        }
         Ok(())
+    }
+
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare(&format!("pragma table_info({table})"))?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for name in columns {
+            if name? == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -311,8 +329,9 @@ fn map_chapter(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryChapter> {
         series_key: row.get(1)?,
         title: row.get(2)?,
         number: row.get(3)?,
-        published_at: row.get(4)?,
-        position: row.get(5)?,
+        volume: row.get(4)?,
+        published_at: row.get(5)?,
+        position: row.get(6)?,
     })
 }
 
