@@ -29,6 +29,12 @@ enum ChapterSort {
     OldestFirst,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeriesView {
+    Volumes,
+    Chapters,
+}
+
 impl ChapterSort {
     fn label(self) -> &'static str {
         match self {
@@ -56,7 +62,11 @@ pub struct App {
     search_results: Vec<SearchResult>,
     selected_search: usize,
     current_series: Option<LibrarySeries>,
+    series_view: SeriesView,
+    volumes: Vec<Option<f64>>,
+    selected_volume: usize,
     chapters: Vec<LibraryChapter>,
+    all_chapters: Vec<LibraryChapter>,
     chapter_sort: ChapterSort,
     chapter_progress: HashMap<String, Progress>,
     selected_chapter: usize,
@@ -83,7 +93,11 @@ impl App {
             search_results: Vec::new(),
             selected_search: 0,
             current_series: None,
+            series_view: SeriesView::Chapters,
+            volumes: Vec::new(),
+            selected_volume: 0,
             chapters: Vec::new(),
+            all_chapters: Vec::new(),
             chapter_sort: ChapterSort::NewestFirst,
             chapter_progress: HashMap::new(),
             selected_chapter: 0,
@@ -143,7 +157,14 @@ impl App {
         let help = match self.screen {
             Screen::Library => "Enter open · / search · r refresh · q quit",
             Screen::Search => "Type query · Enter search · A add/open · Esc back",
-            Screen::Series => "Enter read · o sort newest/oldest · r refresh metadata · Esc back",
+            Screen::Series => match self.series_view {
+                SeriesView::Volumes => {
+                    "Enter open volume · o sort newest/oldest · r refresh metadata · Esc back"
+                }
+                SeriesView::Chapters => {
+                    "Enter read · o sort newest/oldest · r refresh metadata · Esc back"
+                }
+            },
             Screen::Reader => "j/k scroll · PgUp/PgDn · g/G · n/p chapter · Esc back",
         };
         frame.render_widget(
@@ -225,6 +246,11 @@ impl App {
             .as_ref()
             .map(|series| format!("{} ({})", series.title, self.chapter_sort.label()))
             .unwrap_or_else(|| format!("Chapters ({})", self.chapter_sort.label()));
+        if self.series_view == SeriesView::Volumes {
+            self.draw_volumes(frame, area, title.as_str());
+            return;
+        }
+
         let visible_cards = ((area.height.saturating_sub(2) as usize) / 4).max(1);
         self.keep_selected_chapter_visible(visible_cards);
         let items = self
@@ -274,6 +300,65 @@ impl App {
             });
         frame.render_widget(
             List::new(items).block(Block::default().borders(Borders::ALL).title(title.as_str())),
+            area,
+        );
+    }
+
+    fn draw_volumes(
+        &mut self,
+        frame: &mut ratatui::Frame<'_>,
+        area: ratatui::layout::Rect,
+        title: &str,
+    ) {
+        let visible_cards = ((area.height.saturating_sub(2) as usize) / 4).max(1);
+        if self.selected_volume < self.chapter_view_offset {
+            self.chapter_view_offset = self.selected_volume;
+        } else if self.selected_volume >= self.chapter_view_offset + visible_cards {
+            self.chapter_view_offset = self.selected_volume + 1 - visible_cards;
+        }
+        self.chapter_view_offset = self
+            .chapter_view_offset
+            .min(self.volumes.len().saturating_sub(visible_cards));
+
+        let items = self
+            .volumes
+            .iter()
+            .enumerate()
+            .skip(self.chapter_view_offset)
+            .take(visible_cards)
+            .map(|(index, volume)| {
+                let selected = index == self.selected_volume;
+                let marker = if selected { "▸" } else { " " };
+                let chapters = self.chapters_for_volume(*volume);
+                let completed = chapters
+                    .iter()
+                    .filter(|chapter| {
+                        self.chapter_progress
+                            .get(&chapter.key)
+                            .map(|progress| progress.completed)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                let accent = if selected {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(vec![
+                    Line::from(Span::styled(
+                        format!("{marker} {}", volume_label(*volume)),
+                        accent,
+                    )),
+                    Line::from(format!("  {} chapter(s)", chapters.len())),
+                    Line::from(format!(
+                        "  Progress: {completed}/{} completed",
+                        chapters.len()
+                    )),
+                    Line::from(""),
+                ])
+            });
+        frame.render_widget(
+            List::new(items).block(Block::default().borders(Borders::ALL).title(title)),
             area,
         );
     }
@@ -346,14 +431,17 @@ impl App {
     async fn handle_series_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
-                self.screen = Screen::Library;
-                self.reload_library()?;
+                if self.series_view == SeriesView::Chapters && !self.volumes.is_empty() {
+                    self.series_view = SeriesView::Volumes;
+                    self.chapter_view_offset = 0;
+                } else {
+                    self.screen = Screen::Library;
+                    self.reload_library()?;
+                }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                move_down(&mut self.selected_chapter, self.chapters.len())
-            }
-            KeyCode::Up | KeyCode::Char('k') => move_up(&mut self.selected_chapter),
-            KeyCode::Enter => self.open_selected_chapter().await?,
+            KeyCode::Down | KeyCode::Char('j') => self.move_series_selection_down(),
+            KeyCode::Up | KeyCode::Char('k') => self.move_series_selection_up(),
+            KeyCode::Enter => self.activate_series_selection().await?,
             KeyCode::Char('o') => self.toggle_chapter_sort(),
             KeyCode::Char('r') => self.refresh_current_series().await?,
             _ => {}
@@ -365,7 +453,8 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.save_reader_progress()?;
-                self.open_current_series()?;
+                self.reload_chapter_progress()?;
+                self.screen = Screen::Series;
             }
             KeyCode::Down | KeyCode::Char('j') => self.scroll_reader(1)?,
             KeyCode::Up | KeyCode::Char('k') => self.scroll_reader(-1)?,
@@ -380,6 +469,30 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn move_series_selection_down(&mut self) {
+        match self.series_view {
+            SeriesView::Volumes => move_down(&mut self.selected_volume, self.volumes.len()),
+            SeriesView::Chapters => move_down(&mut self.selected_chapter, self.chapters.len()),
+        }
+    }
+
+    fn move_series_selection_up(&mut self) {
+        match self.series_view {
+            SeriesView::Volumes => move_up(&mut self.selected_volume),
+            SeriesView::Chapters => move_up(&mut self.selected_chapter),
+        }
+    }
+
+    async fn activate_series_selection(&mut self) -> Result<()> {
+        match self.series_view {
+            SeriesView::Volumes => {
+                self.open_selected_volume();
+                Ok(())
+            }
+            SeriesView::Chapters => self.open_selected_chapter().await,
+        }
     }
 
     fn reload_library(&mut self) -> Result<()> {
@@ -438,23 +551,72 @@ impl App {
         else {
             return Ok(());
         };
-        self.chapters = self.repo.chapters(&series_key)?;
-        self.sort_chapters(None);
+        self.all_chapters = self.repo.chapters(&series_key)?;
+        self.volumes = collect_volumes(&self.all_chapters, self.chapter_sort);
+        clamp_index(&mut self.selected_volume, self.volumes.len());
+        if self.volumes.is_empty() {
+            self.series_view = SeriesView::Chapters;
+            self.chapters = self.all_chapters.clone();
+            self.sort_chapters(None);
+        } else {
+            self.series_view = SeriesView::Volumes;
+            self.chapters.clear();
+            self.chapter_view_offset = 0;
+        }
+        self.reload_chapter_progress()?;
+        clamp_index(&mut self.selected_chapter, self.chapters.len());
+        self.screen = Screen::Series;
+        Ok(())
+    }
+
+    fn reload_chapter_progress(&mut self) -> Result<()> {
+        let Some(series_key) = self
+            .current_series
+            .as_ref()
+            .map(|series| series.key.clone())
+        else {
+            return Ok(());
+        };
         self.chapter_progress = self
             .repo
             .progress_for_series(&series_key)?
             .into_iter()
             .map(|progress| (progress.chapter_key.clone(), progress))
             .collect();
-        clamp_index(&mut self.selected_chapter, self.chapters.len());
-        self.screen = Screen::Series;
         Ok(())
     }
 
     fn toggle_chapter_sort(&mut self) {
         self.chapter_sort = self.chapter_sort.toggled();
-        self.sort_chapters(None);
+        self.volumes = collect_volumes(&self.all_chapters, self.chapter_sort);
+        clamp_index(&mut self.selected_volume, self.volumes.len());
+        if self.series_view == SeriesView::Chapters {
+            self.sort_chapters(None);
+        }
         self.status = format!("Sorted chapters {}.", self.chapter_sort.label());
+    }
+
+    fn open_selected_volume(&mut self) {
+        let Some(volume) = self.volumes.get(self.selected_volume).copied() else {
+            return;
+        };
+        self.chapters = self
+            .all_chapters
+            .iter()
+            .filter(|chapter| same_volume(chapter.volume, volume))
+            .cloned()
+            .collect();
+        self.selected_chapter = 0;
+        self.chapter_view_offset = 0;
+        self.sort_chapters(None);
+        self.series_view = SeriesView::Chapters;
+    }
+
+    fn chapters_for_volume(&self, volume: Option<f64>) -> Vec<&LibraryChapter> {
+        self.all_chapters
+            .iter()
+            .filter(|chapter| same_volume(chapter.volume, volume))
+            .collect()
     }
 
     fn sort_chapters(&mut self, selected_key: Option<&str>) {
@@ -584,6 +746,33 @@ impl App {
             ratio >= 0.95,
         )
     }
+}
+
+fn collect_volumes(chapters: &[LibraryChapter], sort: ChapterSort) -> Vec<Option<f64>> {
+    let mut volumes = chapters
+        .iter()
+        .filter_map(|chapter| chapter.volume)
+        .collect::<Vec<_>>();
+    volumes.sort_by(|left, right| match sort {
+        ChapterSort::NewestFirst => right.partial_cmp(left).unwrap_or(Ordering::Equal),
+        ChapterSort::OldestFirst => left.partial_cmp(right).unwrap_or(Ordering::Equal),
+    });
+    volumes.dedup_by(|left, right| (*left - *right).abs() < f64::EPSILON);
+    volumes.into_iter().map(Some).collect()
+}
+
+fn same_volume(left: Option<f64>, right: Option<f64>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn volume_label(volume: Option<f64>) -> String {
+    volume
+        .map(|volume| format!("Volume {}", format_chapter_number(volume)))
+        .unwrap_or_else(|| "No volume".to_string())
 }
 
 fn effective_chapter_number(chapter: &LibraryChapter) -> Option<f64> {
