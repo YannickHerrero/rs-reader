@@ -189,6 +189,11 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
+        if self.screen == Screen::Reader && self.sneak_mode {
+            self.draw_sneak_reader(frame, frame.area());
+            return;
+        }
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -512,10 +517,7 @@ impl App {
             Line::from("dist/assets/index-A4b81c0e.css   18.27 kB │ gzip:   4.21 kB"),
             Line::from("✓ built in 2.41s"),
         ];
-        frame.render_widget(
-            Paragraph::new(log).block(Block::default().borders(Borders::ALL).title("terminal")),
-            area,
-        );
+        frame.render_widget(Paragraph::new(log), area);
     }
 
     async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
