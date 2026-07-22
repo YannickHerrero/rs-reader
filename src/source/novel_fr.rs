@@ -164,12 +164,14 @@ fn parse_chapters(document: &Html) -> Vec<Chapter> {
                 .next()
                 .map(|node| clean_text(&node.text().collect::<Vec<_>>().join(" ")))
                 .unwrap_or_default();
-            let number = chapter_number(&label);
             let suffix = link
                 .select(&title_selector)
                 .next()
                 .map(|node| clean_text(&node.text().collect::<Vec<_>>().join(" ")))
                 .unwrap_or_default();
+            let number = chapter_number(&label)
+                .or_else(|| chapter_number(&suffix))
+                .or_else(|| chapter_number(&key));
             let title = match (number, suffix.is_empty()) {
                 (Some(number), false) => format!("Chapitre {} · {suffix}", format_number(number)),
                 (Some(number), true) => format!("Chapitre {}", format_number(number)),
@@ -286,11 +288,21 @@ fn format_number(number: f64) -> String {
 
 fn chapter_number(label: &str) -> Option<f64> {
     let lower = label.to_lowercase().replace(',', ".");
-    let marker = lower.find("chapitre").or_else(|| lower.find("chap."))?;
-    lower[marker..]
+    ["chapitre", "chap.", "chap", "ch.", "ch", "chapter"]
+        .iter()
+        .filter_map(|marker| {
+            lower
+                .find(marker)
+                .map(|index| &lower[index + marker.len()..])
+        })
+        .find_map(first_decimal_number)
+}
+
+fn first_decimal_number(value: &str) -> Option<f64> {
+    value
         .split(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
         .find_map(|part| {
-            (!part.is_empty())
+            (!part.is_empty() && part.chars().any(|ch| ch.is_ascii_digit()))
                 .then(|| part.parse::<f64>().ok())
                 .flatten()
         })
@@ -313,5 +325,7 @@ mod tests {
     fn parses_chapter_numbers() {
         assert_eq!(chapter_number("Chapitre 12"), Some(12.0));
         assert_eq!(chapter_number("Chap. 10,5"), Some(10.5));
+        assert_eq!(chapter_number("Ch. 42"), Some(42.0));
+        assert_eq!(chapter_number("novelFr:/demo-chapitre-123/"), Some(123.0));
     }
 }

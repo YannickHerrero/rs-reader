@@ -236,8 +236,7 @@ impl App {
                     }
                 })
                 .unwrap_or("unread");
-            let number = chapter
-                .number
+            let number = effective_chapter_number(chapter)
                 .map(format_chapter_number)
                 .unwrap_or_else(|| "?".to_string());
             let released = chapter.published_at.as_deref().unwrap_or("unknown date");
@@ -454,8 +453,11 @@ impl App {
 
     fn sort_chapters(&mut self, selected_key: Option<&str>) {
         self.chapters.sort_by(|left, right| {
-            let number_order =
-                compare_chapters_by_number(left.number, right.number, self.chapter_sort);
+            let number_order = compare_chapters_by_number(
+                effective_chapter_number(left),
+                effective_chapter_number(right),
+                self.chapter_sort,
+            );
             number_order.then_with(|| match self.chapter_sort {
                 ChapterSort::NewestFirst => left.position.cmp(&right.position),
                 ChapterSort::OldestFirst => right.position.cmp(&left.position),
@@ -560,6 +562,35 @@ impl App {
             ratio >= 0.95,
         )
     }
+}
+
+fn effective_chapter_number(chapter: &LibraryChapter) -> Option<f64> {
+    chapter
+        .number
+        .or_else(|| chapter_number_from_text(&chapter.title))
+        .or_else(|| chapter_number_from_text(&chapter.key))
+}
+
+fn chapter_number_from_text(value: &str) -> Option<f64> {
+    let lower = value.to_lowercase().replace(',', ".");
+    ["chapitre", "chap.", "chap", "ch.", "ch", "chapter"]
+        .iter()
+        .filter_map(|marker| {
+            lower
+                .find(marker)
+                .map(|index| &lower[index + marker.len()..])
+        })
+        .find_map(first_decimal_number)
+}
+
+fn first_decimal_number(value: &str) -> Option<f64> {
+    value
+        .split(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
+        .find_map(|part| {
+            (!part.is_empty() && part.chars().any(|ch| ch.is_ascii_digit()))
+                .then(|| part.parse::<f64>().ok())
+                .flatten()
+        })
 }
 
 fn strip_existing_chapter_prefix(title: &str) -> &str {
