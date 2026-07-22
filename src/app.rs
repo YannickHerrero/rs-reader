@@ -890,16 +890,31 @@ fn split_paragraphs(text: &str) -> Vec<String> {
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
-    for ch in text.chars() {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        let ch = chars[index];
         current.push(ch);
-        if matches!(ch, '.' | '!' | '?' | '…') {
+
+        if is_sentence_terminal(ch) && should_split_sentence(&current, &chars, index) {
+            while let Some(next) = chars.get(index + 1).copied() {
+                if !is_closing_punctuation(next) {
+                    break;
+                }
+                current.push(next);
+                index += 1;
+            }
+
             let sentence = current.trim();
             if !sentence.is_empty() {
                 sentences.push(sentence.to_string());
             }
             current.clear();
         }
+        index += 1;
     }
+
     let rest = current.trim();
     if !rest.is_empty() {
         sentences.push(rest.to_string());
@@ -909,6 +924,51 @@ fn split_sentences(text: &str) -> Vec<String> {
     } else {
         sentences
     }
+}
+
+fn is_sentence_terminal(ch: char) -> bool {
+    matches!(ch, '.' | '!' | '?' | '…')
+}
+
+fn is_closing_punctuation(ch: char) -> bool {
+    matches!(ch, '"' | '\'' | '”' | '’' | '»' | ')' | ']' | '}')
+}
+
+fn should_split_sentence(current: &str, chars: &[char], index: usize) -> bool {
+    let ch = chars[index];
+    if ch == '.' {
+        if is_decimal_point(chars, index) || ends_with_abbreviation(current) {
+            return false;
+        }
+    }
+
+    chars[index + 1..]
+        .iter()
+        .copied()
+        .find(|ch| !is_closing_punctuation(*ch))
+        .is_none_or(char::is_whitespace)
+}
+
+fn is_decimal_point(chars: &[char], index: usize) -> bool {
+    index > 0
+        && index + 1 < chars.len()
+        && chars[index - 1].is_ascii_digit()
+        && chars[index + 1].is_ascii_digit()
+}
+
+fn ends_with_abbreviation(current: &str) -> bool {
+    let word = current
+        .trim_end()
+        .trim_end_matches('.')
+        .split_whitespace()
+        .last()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| !ch.is_alphabetic())
+        .to_lowercase();
+    matches!(
+        word.as_str(),
+        "m" | "mr" | "mrs" | "ms" | "mme" | "mlle" | "dr" | "prof" | "st" | "ste"
+    )
 }
 
 fn ratio_for_index(index: usize, len: usize) -> f64 {
@@ -1046,5 +1106,26 @@ fn clamp_index(index: &mut usize, len: usize) {
         *index = 0;
     } else if *index >= len {
         *index = len - 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_common_abbreviations_inside_sentences() {
+        assert_eq!(
+            split_sentences("Mme. Layvin entra. Mr. Kane sourit."),
+            vec!["Mme. Layvin entra.", "Mr. Kane sourit."]
+        );
+    }
+
+    #[test]
+    fn keeps_closing_quotes_with_sentence() {
+        assert_eq!(
+            split_sentences("Il dit: \"Bonjour.\" Elle hocha la tête."),
+            vec!["Il dit: \"Bonjour.\"", "Elle hocha la tête."]
+        );
     }
 }
