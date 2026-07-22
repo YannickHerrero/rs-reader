@@ -176,8 +176,9 @@ fn parse_chapters(document: &Html) -> Vec<Chapter> {
                 .or_else(|| chapter_number(&key));
             let volume = volume_number(&label).or_else(|| volume_number(&suffix));
             if let Some(number) = number {
-                let number_key = (number * 1000.0).round() as i64;
-                if !seen_numbers.insert(number_key) {
+                let volume_key = volume.map(number_key);
+                let chapter_key = number_key(number);
+                if !seen_numbers.insert((volume_key, chapter_key)) {
                     return None;
                 }
             }
@@ -305,7 +306,11 @@ fn volume_number(label: &str) -> Option<f64> {
                 .find(marker)
                 .map(|index| &lower[index + marker.len()..])
         })
-        .find_map(first_decimal_number)
+        .find_map(first_immediate_decimal_number)
+}
+
+fn number_key(number: f64) -> i64 {
+    (number * 1000.0).round() as i64
 }
 
 fn chapter_number(label: &str) -> Option<f64> {
@@ -318,6 +323,17 @@ fn chapter_number(label: &str) -> Option<f64> {
                 .map(|index| &lower[index + marker.len()..])
         })
         .find_map(first_decimal_number)
+}
+
+fn first_immediate_decimal_number(value: &str) -> Option<f64> {
+    let trimmed = value.trim_start();
+    let number = trimmed
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect::<String>();
+    (!number.is_empty() && number.chars().any(|ch| ch.is_ascii_digit()))
+        .then(|| number.parse::<f64>().ok())
+        .flatten()
 }
 
 fn first_decimal_number(value: &str) -> Option<f64> {
@@ -356,5 +372,6 @@ mod tests {
     fn parses_volume_numbers() {
         assert_eq!(volume_number("Vol. 12 Ch. 532"), Some(12.0));
         assert_eq!(volume_number("Volume 3 Chapitre 10"), Some(3.0));
+        assert_eq!(volume_number("Vol. Prologue Ch. 0"), None);
     }
 }

@@ -749,6 +749,7 @@ impl App {
 }
 
 fn collect_volumes(chapters: &[LibraryChapter], sort: ChapterSort) -> Vec<Option<f64>> {
+    let has_unvolumed_chapters = chapters.iter().any(|chapter| chapter.volume.is_none());
     let mut volumes = chapters
         .iter()
         .filter_map(|chapter| chapter.volume)
@@ -758,7 +759,14 @@ fn collect_volumes(chapters: &[LibraryChapter], sort: ChapterSort) -> Vec<Option
         ChapterSort::OldestFirst => left.partial_cmp(right).unwrap_or(Ordering::Equal),
     });
     volumes.dedup_by(|left, right| (*left - *right).abs() < f64::EPSILON);
-    volumes.into_iter().map(Some).collect()
+    let mut volumes = volumes.into_iter().map(Some).collect::<Vec<_>>();
+    if has_unvolumed_chapters {
+        match sort {
+            ChapterSort::OldestFirst => volumes.insert(0, None),
+            ChapterSort::NewestFirst => volumes.push(None),
+        }
+    }
+    volumes
 }
 
 fn same_volume(left: Option<f64>, right: Option<f64>) -> bool {
@@ -772,7 +780,7 @@ fn same_volume(left: Option<f64>, right: Option<f64>) -> bool {
 fn volume_label(volume: Option<f64>) -> String {
     volume
         .map(|volume| format!("Volume {}", format_chapter_number(volume)))
-        .unwrap_or_else(|| "No volume".to_string())
+        .unwrap_or_else(|| "Prologue / Extras".to_string())
 }
 
 fn effective_chapter_number(chapter: &LibraryChapter) -> Option<f64> {
