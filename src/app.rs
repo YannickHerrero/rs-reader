@@ -60,6 +60,7 @@ pub struct App {
     chapter_sort: ChapterSort,
     chapter_progress: HashMap<String, Progress>,
     selected_chapter: usize,
+    chapter_view_offset: usize,
     reader_title: String,
     reader_series_key: String,
     reader_chapter_key: String,
@@ -86,6 +87,7 @@ impl App {
             chapter_sort: ChapterSort::NewestFirst,
             chapter_progress: HashMap::new(),
             selected_chapter: 0,
+            chapter_view_offset: 0,
             reader_title: String::new(),
             reader_series_key: String::new(),
             reader_chapter_key: String::new(),
@@ -113,7 +115,7 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut ratatui::Frame<'_>) {
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -217,51 +219,59 @@ impl App {
         );
     }
 
-    fn draw_series(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+    fn draw_series(&mut self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         let title = self
             .current_series
             .as_ref()
             .map(|series| format!("{} ({})", series.title, self.chapter_sort.label()))
             .unwrap_or_else(|| format!("Chapters ({})", self.chapter_sort.label()));
-        let items = self.chapters.iter().enumerate().map(|(index, chapter)| {
-            let selected = index == self.selected_chapter;
-            let marker = if selected { "▸" } else { " " };
-            let progress = self.chapter_progress.get(&chapter.key);
-            let state = progress
-                .map(|progress| {
-                    if progress.completed {
-                        "completed"
-                    } else {
-                        "in progress"
-                    }
-                })
-                .unwrap_or("unread");
-            let number = effective_chapter_number(chapter)
-                .map(format_chapter_number)
-                .unwrap_or_else(|| "?".to_string());
-            let released = chapter.published_at.as_deref().unwrap_or("unknown date");
-            let accent = if selected {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+        let visible_cards = ((area.height.saturating_sub(2) as usize) / 4).max(1);
+        self.keep_selected_chapter_visible(visible_cards);
+        let items = self
+            .chapters
+            .iter()
+            .enumerate()
+            .skip(self.chapter_view_offset)
+            .take(visible_cards)
+            .map(|(index, chapter)| {
+                let selected = index == self.selected_chapter;
+                let marker = if selected { "▸" } else { " " };
+                let progress = self.chapter_progress.get(&chapter.key);
+                let state = progress
+                    .map(|progress| {
+                        if progress.completed {
+                            "completed"
+                        } else {
+                            "in progress"
+                        }
+                    })
+                    .unwrap_or("unread");
+                let number = effective_chapter_number(chapter)
+                    .map(format_chapter_number)
+                    .unwrap_or_else(|| "?".to_string());
+                let released = chapter.published_at.as_deref().unwrap_or("unknown date");
+                let accent = if selected {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
 
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(format!("{marker} Chapter {number}"), accent),
-                    Span::raw(format!("  ·  {state}")),
-                ]),
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(
-                        strip_existing_chapter_prefix(&chapter.title).to_string(),
-                        accent,
-                    ),
-                ]),
-                Line::from(format!("  Released: {released}")),
-                Line::from(""),
-            ])
-        });
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::styled(format!("{marker} Chapter {number}"), accent),
+                        Span::raw(format!("  ·  {state}")),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            strip_existing_chapter_prefix(&chapter.title).to_string(),
+                            accent,
+                        ),
+                    ]),
+                    Line::from(format!("  Released: {released}")),
+                    Line::from(""),
+                ])
+            });
         frame.render_widget(
             List::new(items).block(Block::default().borders(Borders::ALL).title(title.as_str())),
             area,
@@ -442,12 +452,8 @@ impl App {
     }
 
     fn toggle_chapter_sort(&mut self) {
-        let selected_key = self
-            .chapters
-            .get(self.selected_chapter)
-            .map(|chapter| chapter.key.clone());
         self.chapter_sort = self.chapter_sort.toggled();
-        self.sort_chapters(selected_key.as_deref());
+        self.sort_chapters(None);
         self.status = format!("Sorted chapters {}.", self.chapter_sort.label());
     }
 
@@ -473,6 +479,22 @@ impl App {
             }
         }
         clamp_index(&mut self.selected_chapter, self.chapters.len());
+    }
+
+    fn keep_selected_chapter_visible(&mut self, visible_cards: usize) {
+        if self.chapters.is_empty() {
+            self.chapter_view_offset = 0;
+            return;
+        }
+        let visible_cards = visible_cards.max(1);
+        if self.selected_chapter < self.chapter_view_offset {
+            self.chapter_view_offset = self.selected_chapter;
+        } else if self.selected_chapter >= self.chapter_view_offset + visible_cards {
+            self.chapter_view_offset = self.selected_chapter + 1 - visible_cards;
+        }
+        self.chapter_view_offset = self
+            .chapter_view_offset
+            .min(self.chapters.len().saturating_sub(visible_cards));
     }
 
     async fn refresh_current_series(&mut self) -> Result<()> {
