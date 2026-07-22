@@ -761,12 +761,13 @@ impl App {
             self.repo.cache_chapter(&content)?;
             (content.title, content.text)
         };
+        let reader_text = reflow_reader_text(&text);
         self.reader_title = title;
         self.reader_series_key = chapter.series_key.clone();
         self.reader_chapter_key = chapter.key.clone();
-        self.reader_lines = text.lines().map(str::to_string).collect();
-        self.reader_paragraphs = split_paragraphs(&text);
-        self.reader_sentences = split_sentences(&text);
+        self.reader_lines = reader_text.lines().map(str::to_string).collect();
+        self.reader_paragraphs = split_paragraphs(&reader_text);
+        self.reader_sentences = split_sentences(&reader_text);
         let saved_progress = self.repo.progress(&chapter.key)?;
         self.reader_scroll = saved_progress
             .as_ref()
@@ -875,18 +876,20 @@ impl App {
     }
 }
 
+fn reflow_reader_text(text: &str) -> String {
+    split_paragraphs(text).join("\n\n")
+}
+
 fn split_paragraphs(text: &str) -> Vec<String> {
     let paragraphs = text
         .split("\n\n")
-        .map(|paragraph| paragraph.trim())
+        .map(collapse_whitespace)
         .filter(|paragraph| !paragraph.is_empty())
-        .map(str::to_string)
         .collect::<Vec<_>>();
     if paragraphs.is_empty() {
         text.lines()
-            .map(str::trim)
+            .map(collapse_whitespace)
             .filter(|line| !line.is_empty())
-            .map(str::to_string)
             .collect()
     } else {
         paragraphs
@@ -914,7 +917,7 @@ fn split_sentences(text: &str) -> Vec<String> {
 
             let sentence = current.trim();
             if !sentence.is_empty() {
-                sentences.push(sentence.to_string());
+                sentences.push(collapse_whitespace(sentence));
             }
             current.clear();
         }
@@ -923,13 +926,17 @@ fn split_sentences(text: &str) -> Vec<String> {
 
     let rest = current.trim();
     if !rest.is_empty() {
-        sentences.push(rest.to_string());
+        sentences.push(collapse_whitespace(rest));
     }
     if sentences.is_empty() {
         split_paragraphs(text)
     } else {
         sentences
     }
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn is_sentence_terminal(ch: char) -> bool {
@@ -1132,6 +1139,14 @@ mod tests {
         assert_eq!(
             split_sentences("Il dit: \"Bonjour.\" Elle hocha la tête."),
             vec!["Il dit: \"Bonjour.\"", "Elle hocha la tête."]
+        );
+    }
+
+    #[test]
+    fn reflows_aesthetic_line_breaks_inside_paragraphs() {
+        assert_eq!(
+            reflow_reader_text("Je ne sais pas comment\nvous l'expliquer.\n\nMais voilà."),
+            "Je ne sais pas comment vous l'expliquer.\n\nMais voilà."
         );
     }
 }

@@ -103,7 +103,7 @@ impl NovelFrSource {
             .next()
             .map(|node| node.inner_html())
             .unwrap_or_default();
-        let text = html2text::from_read(chapter_html.as_bytes(), 100)
+        let text = html2text::from_read(chapter_html.as_bytes(), 10_000)
             .context("failed to convert chapter html to text")?
             .lines()
             .map(str::trim_end)
