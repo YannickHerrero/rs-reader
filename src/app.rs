@@ -122,6 +122,7 @@ pub struct App {
     reader_scroll: usize,
     reader_unit_index: usize,
     reader_mode: ReaderMode,
+    sneak_mode: bool,
     status: String,
     should_quit: bool,
 }
@@ -164,6 +165,7 @@ impl App {
             reader_scroll: 0,
             reader_unit_index: 0,
             reader_mode: ReaderMode::Normal,
+            sneak_mode: false,
             status: String::new(),
             should_quit: false,
         };
@@ -200,6 +202,7 @@ impl App {
             Screen::Library => "rs-reader · Library".to_string(),
             Screen::Search => format!("rs-reader · Search {}", self.source.name()),
             Screen::Series => "rs-reader · Chapters".to_string(),
+            Screen::Reader if self.sneak_mode => "vite v7.0.6 · building client".to_string(),
             Screen::Reader => "rs-reader · Reader".to_string(),
         };
         frame.render_widget(Paragraph::new(title), chunks[0]);
@@ -222,12 +225,18 @@ impl App {
                     "Enter read · h hide/show read · o sort newest/oldest · r refresh metadata · Esc back"
                 }
             },
+            Screen::Reader if self.sneak_mode => "transforming modules...",
             Screen::Reader => {
                 "Tab mode · Space next · j/k move · PgUp/PgDn · g/G · n/p chapter · Esc back"
             }
         };
+        let status = if self.sneak_mode && self.screen == Screen::Reader {
+            "✓ 1842 modules transformed · rendering chunks"
+        } else {
+            self.status.as_str()
+        };
         frame.render_widget(
-            Paragraph::new(vec![Line::from(help), Line::from(self.status.as_str())]),
+            Paragraph::new(vec![Line::from(help), Line::from(status)]),
             chunks[2],
         );
     }
@@ -423,6 +432,10 @@ impl App {
     }
 
     fn draw_reader(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+        if self.sneak_mode {
+            self.draw_sneak_reader(frame, area);
+            return;
+        }
         let has_counter = self.reader_mode != ReaderMode::Normal;
         let block = Block::default().borders(Borders::ALL).title(format!(
             "{} · {}",
@@ -479,6 +492,30 @@ impl App {
         if let Some(counter) = counter {
             frame.render_widget(Paragraph::new(counter), chunks[1]);
         }
+    }
+
+    fn draw_sneak_reader(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+        let log = vec![
+            Line::from("  VITE v7.0.6  ready in 384 ms"),
+            Line::from(""),
+            Line::from("  ➜  Local:   http://localhost:5173/"),
+            Line::from("  ➜  Network: use --host to expose"),
+            Line::from(""),
+            Line::from("[plugin:vite:react-babel] compiling src/App.tsx"),
+            Line::from("transforming (1432) node_modules/react-dom/client.js"),
+            Line::from("transforming (1842) src/components/VirtualList.tsx"),
+            Line::from("✓ 1842 modules transformed."),
+            Line::from("rendering chunks..."),
+            Line::from("computing gzip size..."),
+            Line::from("dist/index.html                   0.46 kB │ gzip:   0.30 kB"),
+            Line::from("dist/assets/index-D9f3a2c1.js   312.84 kB │ gzip: 101.62 kB"),
+            Line::from("dist/assets/index-A4b81c0e.css   18.27 kB │ gzip:   4.21 kB"),
+            Line::from("✓ built in 2.41s"),
+        ];
+        frame.render_widget(
+            Paragraph::new(log).block(Block::default().borders(Borders::ALL).title("terminal")),
+            area,
+        );
     }
 
     async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -570,6 +607,7 @@ impl App {
                 }
                 self.screen = Screen::Series;
             }
+            KeyCode::Char('b') => self.sneak_mode = !self.sneak_mode,
             KeyCode::Tab => self.cycle_reader_mode()?,
             KeyCode::Char(' ') => self.move_reader(1)?,
             KeyCode::Down | KeyCode::Char('j') => self.move_reader(1)?,
@@ -879,6 +917,7 @@ impl App {
             .as_ref()
             .map(|progress| ReaderMode::from_label(&progress.reader_mode))
             .unwrap_or(ReaderMode::Normal);
+        self.sneak_mode = false;
         let ratio = saved_progress
             .as_ref()
             .map(|progress| progress.scroll_ratio.clamp(0.0, 1.0))
