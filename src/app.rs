@@ -115,7 +115,7 @@ impl App {
 
         let help = match self.screen {
             Screen::Library => "Enter open · / search · r refresh · q quit",
-            Screen::Search => "Type query · Enter search · a add/open · Esc back",
+            Screen::Search => "Type query · Enter search · A add/open · Esc back",
             Screen::Series => "Enter read · r refresh metadata · Esc back",
             Screen::Reader => "j/k scroll · PgUp/PgDn · g/G · n/p chapter · Esc back",
         };
@@ -270,7 +270,7 @@ impl App {
             KeyCode::Backspace => {
                 self.search_query.pop();
             }
-            KeyCode::Char('a') if !self.search_results.is_empty() => {
+            KeyCode::Char('A') if !self.search_results.is_empty() => {
                 self.add_selected_search_result().await?
             }
             KeyCode::Enter => self.run_search().await?,
