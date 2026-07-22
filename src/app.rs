@@ -224,20 +224,44 @@ impl App {
             .map(|series| format!("{} ({})", series.title, self.chapter_sort.label()))
             .unwrap_or_else(|| format!("Chapters ({})", self.chapter_sort.label()));
         let items = self.chapters.iter().enumerate().map(|(index, chapter)| {
-            let marker = if index == self.selected_chapter {
-                ">"
+            let selected = index == self.selected_chapter;
+            let marker = if selected { "▸" } else { " " };
+            let progress = self.chapter_progress.get(&chapter.key);
+            let state = progress
+                .map(|progress| {
+                    if progress.completed {
+                        "completed"
+                    } else {
+                        "in progress"
+                    }
+                })
+                .unwrap_or("unread");
+            let number = chapter
+                .number
+                .map(format_chapter_number)
+                .unwrap_or_else(|| "?".to_string());
+            let released = chapter.published_at.as_deref().unwrap_or("unknown date");
+            let accent = if selected {
+                Style::default().add_modifier(Modifier::BOLD)
             } else {
-                " "
+                Style::default()
             };
-            let state = self
-                .chapter_progress
-                .get(&chapter.key)
-                .map(|progress| if progress.completed { "✓" } else { "…" })
-                .unwrap_or(" ");
-            ListItem::new(format!(
-                "{marker} {state} {}",
-                chapter_display_title(chapter)
-            ))
+
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(format!("{marker} Chapter {number}"), accent),
+                    Span::raw(format!("  ·  {state}")),
+                ]),
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        strip_existing_chapter_prefix(&chapter.title).to_string(),
+                        accent,
+                    ),
+                ]),
+                Line::from(format!("  Released: {released}")),
+                Line::from(""),
+            ])
         });
         frame.render_widget(
             List::new(items).block(Block::default().borders(Borders::ALL).title(title.as_str())),
@@ -535,19 +559,6 @@ impl App {
             ratio,
             ratio >= 0.95,
         )
-    }
-}
-
-fn chapter_display_title(chapter: &LibraryChapter) -> String {
-    let Some(number) = chapter.number else {
-        return chapter.title.clone();
-    };
-    let number = format_chapter_number(number);
-    let title = strip_existing_chapter_prefix(&chapter.title);
-    if title.is_empty() {
-        number
-    } else {
-        format!("{number}. {title}")
     }
 }
 
