@@ -16,11 +16,18 @@ pub struct LibraryRepository {
 }
 
 impl LibraryRepository {
-    pub fn open_default() -> Result<Self> {
+    pub fn open_profile(profile: &str) -> Result<Self> {
         let dirs = ProjectDirs::from("me", "yannick", "rs-reader")
             .context("failed to resolve application data directory")?;
-        fs::create_dir_all(dirs.data_dir()).context("failed to create data directory")?;
-        Self::open(dirs.data_dir().join("library.sqlite"))
+        let profile_dir = dirs.data_dir().join(profile);
+        fs::create_dir_all(&profile_dir).context("failed to create data directory")?;
+        let profile_db = profile_dir.join("library.sqlite");
+        let old_db = dirs.data_dir().join("library.sqlite");
+        if profile == "fr" && old_db.exists() && !profile_db.exists() {
+            fs::rename(&old_db, &profile_db)
+                .or_else(|_| fs::copy(&old_db, &profile_db).map(|_| ()))?;
+        }
+        Self::open(profile_db)
     }
 
     pub fn open(path: PathBuf) -> Result<Self> {

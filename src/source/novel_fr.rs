@@ -2,11 +2,13 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use tokio::time::sleep;
 
+use super::NovelSource;
 use super::types::{Chapter, ChapterContent, SearchResult, Series};
 
 const BASE_URL: &str = "https://novel-fr.net";
@@ -37,13 +39,13 @@ impl NovelFrSource {
         })
     }
 
-    pub async fn recommendations(&self) -> Result<Vec<SearchResult>> {
+    async fn recommendations_impl(&self) -> Result<Vec<SearchResult>> {
         let url = Url::parse(BASE_URL)?.join("/series/?status=&type=&order=popular")?;
         let html = self.request_text(url).await?;
         Ok(parse_recommendations(&Html::parse_document(&html)))
     }
 
-    pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+    async fn search_impl(&self, query: &str) -> Result<Vec<SearchResult>> {
         let mut url = Url::parse(BASE_URL)?.join("/wp-json/wp/v2/search")?;
         url.query_pairs_mut()
             .append_pair("search", query)
@@ -62,7 +64,7 @@ impl NovelFrSource {
             .collect())
     }
 
-    pub async fn series(&self, key: &str) -> Result<Series> {
+    async fn series_impl(&self, key: &str) -> Result<Series> {
         let path = source_path(key)?;
         if !path.starts_with("/series/") || !path.ends_with('/') {
             bail!("invalid Novel-FR series key");
@@ -93,7 +95,7 @@ impl NovelFrSource {
         })
     }
 
-    pub async fn chapter(&self, key: &str) -> Result<ChapterContent> {
+    async fn chapter_impl(&self, key: &str) -> Result<ChapterContent> {
         let path = source_path(key)?;
         if !path.starts_with('/') || !path.ends_with('/') || path.starts_with("/series/") {
             bail!("invalid Novel-FR chapter key");
@@ -154,6 +156,29 @@ impl NovelFrSource {
             sleep(*next - now).await;
         }
         *next = Instant::now() + Duration::from_millis(500);
+    }
+}
+
+#[async_trait]
+impl NovelSource for NovelFrSource {
+    fn name(&self) -> &'static str {
+        "Novel-FR"
+    }
+
+    async fn recommendations(&self) -> Result<Vec<SearchResult>> {
+        self.recommendations_impl().await
+    }
+
+    async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+        self.search_impl(query).await
+    }
+
+    async fn series(&self, key: &str) -> Result<Series> {
+        self.series_impl(key).await
+    }
+
+    async fn chapter(&self, key: &str) -> Result<ChapterContent> {
+        self.chapter_impl(key).await
     }
 }
 

@@ -4,8 +4,8 @@ mod source;
 
 use std::io;
 
-use anyhow::Result;
-use app::App;
+use anyhow::{Result, bail};
+use app::{App, TextLayout};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -14,13 +14,59 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::db::LibraryRepository;
-use crate::source::NovelFrSource;
+use crate::source::{NovelFrSource, NovelSource, SyosetuSource};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Profile {
+    Fr,
+    Jp,
+}
+
+impl Profile {
+    fn from_args() -> Result<Self> {
+        let mut profile = Self::Fr;
+        for arg in std::env::args().skip(1) {
+            match arg.as_str() {
+                "--fr" => profile = Self::Fr,
+                "--jp" => profile = Self::Jp,
+                "-h" | "--help" => {
+                    print_help();
+                    std::process::exit(0);
+                }
+                unknown => bail!("unknown argument: {unknown}"),
+            }
+        }
+        Ok(profile)
+    }
+
+    fn db_profile(self) -> &'static str {
+        match self {
+            Self::Fr => "fr",
+            Self::Jp => "jp",
+        }
+    }
+
+    fn text_layout(self) -> TextLayout {
+        match self {
+            Self::Fr => TextLayout::SpaceSeparated,
+            Self::Jp => TextLayout::LineSeparated,
+        }
+    }
+
+    fn source(self) -> Result<Box<dyn NovelSource>> {
+        match self {
+            Self::Fr => Ok(Box::new(NovelFrSource::new()?)),
+            Self::Jp => Ok(Box::new(SyosetuSource::new()?)),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let repo = LibraryRepository::open_default()?;
-    let source = NovelFrSource::new()?;
-    let mut app = App::new(repo, source)?;
+    let profile = Profile::from_args()?;
+    let repo = LibraryRepository::open_profile(profile.db_profile())?;
+    let source = profile.source()?;
+    let mut app = App::new(repo, source, profile.text_layout())?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -35,4 +81,13 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     result
+}
+
+fn print_help() {
+    println!("rs-reader");
+    println!();
+    println!("Usage: rs-reader [--fr|--jp]");
+    println!();
+    println!("  --fr    Use Novel-FR with the French library (default)");
+    println!("  --jp    Use Syosetu with a separate Japanese library");
 }

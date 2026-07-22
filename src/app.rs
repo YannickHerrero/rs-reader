@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
 use crate::db::{LibraryChapter, LibraryRepository, LibrarySeries, Progress};
-use crate::source::{NovelFrSource, SearchResult};
+use crate::source::{NovelSource, SearchResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -33,6 +33,12 @@ enum ChapterSort {
 enum SeriesView {
     Volumes,
     Chapters,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextLayout {
+    SpaceSeparated,
+    LineSeparated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +92,8 @@ impl ChapterSort {
 
 pub struct App {
     repo: LibraryRepository,
-    source: NovelFrSource,
+    source: Box<dyn NovelSource>,
+    text_layout: TextLayout,
     screen: Screen,
     library: Vec<LibrarySeries>,
     library_progress: HashMap<String, (usize, usize)>,
@@ -120,10 +127,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(repo: LibraryRepository, source: NovelFrSource) -> Result<Self> {
+    pub fn new(
+        repo: LibraryRepository,
+        source: Box<dyn NovelSource>,
+        text_layout: TextLayout,
+    ) -> Result<Self> {
         let mut app = Self {
             repo,
             source,
+            text_layout,
             screen: Screen::Library,
             library: Vec::new(),
             library_progress: HashMap::new(),
@@ -185,10 +197,10 @@ impl App {
             .split(frame.area());
 
         let title = match self.screen {
-            Screen::Library => "rs-reader · Library",
-            Screen::Search => "rs-reader · Search Novel-FR",
-            Screen::Series => "rs-reader · Chapters",
-            Screen::Reader => "rs-reader · Reader",
+            Screen::Library => "rs-reader · Library".to_string(),
+            Screen::Search => format!("rs-reader · Search {}", self.source.name()),
+            Screen::Series => "rs-reader · Chapters".to_string(),
+            Screen::Reader => "rs-reader · Reader".to_string(),
         };
         frame.render_widget(Paragraph::new(title), chunks[0]);
 
@@ -850,7 +862,7 @@ impl App {
             self.repo.cache_chapter(&content)?;
             (content.title, content.text)
         };
-        let reader_text = reflow_reader_text(&text);
+        let reader_text = reflow_reader_text(&text, self.text_layout);
         self.reader_title = title;
         self.reader_series_key = chapter.series_key.clone();
         self.reader_chapter_key = chapter.key.clone();
@@ -975,19 +987,23 @@ impl App {
     }
 }
 
-fn reflow_reader_text(text: &str) -> String {
-    split_paragraphs(text).join("\n\n")
+fn reflow_reader_text(text: &str, layout: TextLayout) -> String {
+    split_paragraphs_with_layout(text, layout).join("\n\n")
 }
 
 fn split_paragraphs(text: &str) -> Vec<String> {
+    split_paragraphs_with_layout(text, TextLayout::SpaceSeparated)
+}
+
+fn split_paragraphs_with_layout(text: &str, layout: TextLayout) -> Vec<String> {
     let paragraphs = text
         .split("\n\n")
-        .map(collapse_whitespace)
+        .map(|paragraph| normalize_paragraph(paragraph, layout))
         .filter(|paragraph| !paragraph.is_empty())
         .collect::<Vec<_>>();
     if paragraphs.is_empty() {
         text.lines()
-            .map(collapse_whitespace)
+            .map(|line| normalize_paragraph(line, layout))
             .filter(|line| !line.is_empty())
             .collect()
     } else {
@@ -1034,16 +1050,26 @@ fn split_sentences(text: &str) -> Vec<String> {
     }
 }
 
+fn normalize_paragraph(text: &str, layout: TextLayout) -> String {
+    match layout {
+        TextLayout::SpaceSeparated => collapse_whitespace(text),
+        TextLayout::LineSeparated => text.lines().map(str::trim).collect::<Vec<_>>().join(""),
+    }
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn is_sentence_terminal(ch: char) -> bool {
-    matches!(ch, '.' | '!' | '?' | '…')
+    matches!(ch, '.' | '!' | '?' | '…' | '。' | '！' | '？')
 }
 
 fn is_closing_punctuation(ch: char) -> bool {
-    matches!(ch, '"' | '\'' | '”' | '’' | '»' | ')' | ']' | '}')
+    matches!(
+        ch,
+        '"' | '\'' | '”' | '’' | '»' | '」' | '』' | ')' | '）' | ']' | '}'
+    )
 }
 
 fn should_split_sentence(current: &str, chars: &[char], index: usize) -> bool {
@@ -1244,7 +1270,10 @@ mod tests {
     #[test]
     fn reflows_aesthetic_line_breaks_inside_paragraphs() {
         assert_eq!(
-            reflow_reader_text("Je ne sais pas comment\nvous l'expliquer.\n\nMais voilà."),
+            reflow_reader_text(
+                "Je ne sais pas comment\nvous l'expliquer.\n\nMais voilà.",
+                TextLayout::SpaceSeparated,
+            ),
             "Je ne sais pas comment vous l'expliquer.\n\nMais voilà."
         );
     }

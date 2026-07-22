@@ -1,10 +1,10 @@
 # rs-reader
 
-A small terminal light novel reader for [Novel-FR](https://novel-fr.net), built with Rust and Ratatui.
+A small terminal light novel reader for [Novel-FR](https://novel-fr.net) and [Syosetu](https://ncode.syosetu.com), built with Rust and Ratatui.
 
 ## Features
 
-- Search Novel-FR from the terminal
+- Search Novel-FR or Syosetu from the terminal
 - Add a series to a local library
 - Browse saved series, volumes and chapters
 - Read chapters in a minimal scrolling TUI
@@ -28,10 +28,11 @@ cargo run
 Or after installing:
 
 ```bash
-rs-reader
+rs-reader       # French Novel-FR profile
+rs-reader --jp  # Japanese Syosetu profile
 ```
 
-The library is stored in SQLite under the platform data directory, e.g. `~/.local/share/rs-reader/library.sqlite` on Linux.
+The French and Japanese libraries are separated. They are stored in SQLite under the platform data directory, e.g. `~/.local/share/rs-reader/fr/library.sqlite` and `~/.local/share/rs-reader/jp/library.sqlite` on Linux.
 
 ## Keybindings
 
