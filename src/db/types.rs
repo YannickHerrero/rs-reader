@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct LibrarySeries {
     pub key: String,
@@ -10,6 +11,7 @@ pub struct LibrarySeries {
     pub updated_at: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct LibraryChapter {
     pub key: String,
@@ -20,6 +22,7 @@ pub struct LibraryChapter {
     pub position: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Progress {
     pub chapter_key: String,
@@ -30,6 +33,7 @@ pub struct Progress {
     pub last_read_at: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CachedChapter {
     pub chapter_key: String,

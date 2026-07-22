@@ -116,18 +116,6 @@ impl LibraryRepository {
             .map_err(Into::into)
     }
 
-    pub fn chapter(&self, key: &str) -> Result<Option<LibraryChapter>> {
-        self.conn
-            .query_row(
-                "select key, series_key, title, number, published_at, position
-                 from chapters where key = ?1",
-                params![key],
-                map_chapter,
-            )
-            .optional()
-            .map_err(Into::into)
-    }
-
     pub fn save_progress(
         &self,
         series_key: &str,
