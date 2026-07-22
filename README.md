@@ -11,10 +11,24 @@ A small terminal light novel reader for [Novel-FR](https://novel-fr.net), built 
 - Save reading position and mark chapters complete near the end
 - Cache fetched chapter text locally
 
+## Install
+
+```bash
+cargo install --git https://github.com/YannickHerrero/rs-reader.git
+```
+
 ## Run
+
+From a checkout:
 
 ```bash
 cargo run
+```
+
+Or after installing:
+
+```bash
+rs-reader
 ```
 
 The library is stored in SQLite under the platform data directory, e.g. `~/.local/share/rs-reader/library.sqlite` on Linux.
