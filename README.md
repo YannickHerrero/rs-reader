@@ -28,8 +28,10 @@ cargo run
 Or after installing:
 
 ```bash
-rs-reader       # French Novel-FR profile
-rs-reader --jp  # Japanese Syosetu profile
+rs-reader             # French Novel-FR profile
+rs-reader --jp        # Japanese Syosetu profile
+rs-reader --fzf       # fzf-driven navigation, then normal reader
+rs-reader --jp --fzf  # Japanese profile with fzf navigation
 ```
 
 The French and Japanese libraries are separated. They are stored in SQLite under the platform data directory, e.g. `~/.local/share/rs-reader/fr/library.sqlite` and `~/.local/share/rs-reader/jp/library.sqlite` on Linux.

@@ -188,6 +188,27 @@ impl App {
         Ok(())
     }
 
+    pub async fn run_reader_only(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        chapter: &LibraryChapter,
+    ) -> Result<()> {
+        self.current_series = self.repo.get_series(&chapter.series_key)?;
+        self.all_chapters = self.repo.chapters(&chapter.series_key)?;
+        self.chapters = self.all_chapters.clone();
+        self.sort_chapters(Some(&chapter.key));
+        self.open_chapter(chapter.clone()).await?;
+        while self.screen == Screen::Reader && !self.should_quit {
+            terminal.draw(|frame| self.draw(frame))?;
+            if event::poll(Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    self.handle_key(key).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         if self.screen == Screen::Reader && self.sneak_mode {
             self.draw_sneak_reader(frame, frame.area());
