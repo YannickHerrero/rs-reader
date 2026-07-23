@@ -133,6 +133,10 @@ impl App {
         source: Box<dyn NovelSource>,
         text_layout: TextLayout,
     ) -> Result<Self> {
+        let reader_mode = repo
+            .reader_mode()?
+            .map(|mode| ReaderMode::from_label(&mode))
+            .unwrap_or(ReaderMode::Normal);
         let mut app = Self {
             repo,
             source,
@@ -164,7 +168,7 @@ impl App {
             reader_sentences: Vec::new(),
             reader_scroll: 0,
             reader_unit_index: 0,
-            reader_mode: ReaderMode::Normal,
+            reader_mode,
             sneak_mode: false,
             status: String::new(),
             should_quit: false,
@@ -936,10 +940,6 @@ impl App {
             .map(|progress| progress.scroll_line.max(0) as usize)
             .unwrap_or(0)
             .min(self.reader_lines.len().saturating_sub(1));
-        self.reader_mode = saved_progress
-            .as_ref()
-            .map(|progress| ReaderMode::from_label(&progress.reader_mode))
-            .unwrap_or(ReaderMode::Normal);
         self.sneak_mode = false;
         let ratio = saved_progress
             .as_ref()
@@ -947,6 +947,7 @@ impl App {
             .unwrap_or(0.0);
         self.reader_unit_index = saved_progress
             .as_ref()
+            .filter(|progress| ReaderMode::from_label(&progress.reader_mode) == self.reader_mode)
             .map(|progress| progress.reader_unit_index.max(0) as usize)
             .unwrap_or_else(|| unit_index_from_ratio(self.current_reader_units_len(), ratio))
             .min(self.current_reader_units_len().saturating_sub(1));
@@ -976,6 +977,7 @@ impl App {
         self.reader_unit_index = unit_index_from_ratio(self.current_reader_units_len(), ratio);
         self.reader_scroll = unit_index_from_ratio(self.reader_lines.len(), ratio);
         self.status = format!("Reader mode: {}.", self.reader_mode.label());
+        self.repo.save_reader_mode(self.reader_mode.label())?;
         self.save_reader_progress()
     }
 

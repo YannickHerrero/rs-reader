@@ -261,6 +261,26 @@ impl LibraryRepository {
             .map_err(Into::into)
     }
 
+    pub fn reader_mode(&self) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "select value from settings where key = 'reader_mode'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn save_reader_mode(&self, mode: &str) -> Result<()> {
+        self.conn.execute(
+            "insert into settings (key, value) values ('reader_mode', ?1)
+             on conflict(key) do update set value = excluded.value",
+            params![mode],
+        )?;
+        Ok(())
+    }
+
     fn migrate(&self) -> Result<()> {
         self.conn.execute_batch(
             "pragma foreign_keys = on;
@@ -304,6 +324,11 @@ impl LibraryRepository {
                title text not null,
                text text not null,
                fetched_at integer not null
+             );
+
+             create table if not exists settings (
+               key text primary key,
+               value text not null
              );",
         )?;
         if !self.column_exists("chapters", "volume")? {
