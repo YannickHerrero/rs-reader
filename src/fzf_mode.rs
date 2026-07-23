@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -106,19 +107,24 @@ fn pick_chapter(
     if chapters.is_empty() {
         return Ok(None);
     }
+    let progress = repo
+        .progress_for_series(&series.key)?
+        .into_iter()
+        .map(|progress| (progress.chapter_key, progress.completed))
+        .collect::<HashMap<_, _>>();
 
     let volumes = collect_volumes(&chapters);
     let volume = if volumes.len() > 1 {
         let lines = volumes
             .iter()
-            .map(|volume| volume_label(*volume))
+            .map(|volume| volume_label_with_progress(*volume, &chapters, &progress))
             .collect::<Vec<_>>();
         let Some(selected) = fzf_select("Volumes> ", &lines)? else {
             return Ok(None);
         };
         volumes
             .into_iter()
-            .find(|volume| volume_label(*volume) == selected)
+            .find(|volume| volume_label_with_progress(*volume, &chapters, &progress) == selected)
     } else {
         volumes.first().copied()
     };
@@ -131,7 +137,12 @@ fn pick_chapter(
         .iter()
         .map(|chapter| {
             format!(
-                "{}  {}  {}\t{}",
+                "{} {}  {}  {}\t{}",
+                if progress.get(&chapter.key).copied().unwrap_or(false) {
+                    "✓"
+                } else {
+                    " "
+                },
                 chapter
                     .number
                     .map(format_number)
@@ -255,6 +266,23 @@ fn same_volume(left: Option<f64>, right: Option<f64>) -> bool {
         (None, None) => true,
         _ => false,
     }
+}
+
+fn volume_label_with_progress(
+    volume: Option<f64>,
+    chapters: &[LibraryChapter],
+    progress: &HashMap<String, bool>,
+) -> String {
+    let total = chapters
+        .iter()
+        .filter(|chapter| same_volume(chapter.volume, volume))
+        .count();
+    let completed = chapters
+        .iter()
+        .filter(|chapter| same_volume(chapter.volume, volume))
+        .filter(|chapter| progress.get(&chapter.key).copied().unwrap_or(false))
+        .count();
+    format!("({completed}/{total}) {}", volume_label(volume))
 }
 
 fn volume_label(volume: Option<f64>) -> String {
