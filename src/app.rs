@@ -1138,17 +1138,45 @@ fn is_closing_punctuation(ch: char) -> bool {
 
 fn should_split_sentence(current: &str, chars: &[char], index: usize) -> bool {
     let ch = chars[index];
-    if ch == '.' {
-        if is_decimal_point(chars, index) || ends_with_abbreviation(current) {
-            return false;
-        }
+    if ch == '.' && (is_decimal_point(chars, index) || ends_with_abbreviation(current)) {
+        return false;
+    }
+    if chars
+        .get(index + 1)
+        .copied()
+        .is_some_and(is_sentence_terminal)
+    {
+        return false;
     }
 
-    chars[index + 1..]
-        .iter()
+    let mut cursor = index + 1;
+    while chars.get(cursor).copied().is_some_and(is_sentence_terminal) {
+        cursor += 1;
+    }
+    let mut saw_spacing = false;
+    while chars.get(cursor).copied().is_some_and(char::is_whitespace) {
+        saw_spacing = true;
+        cursor += 1;
+    }
+    while chars
+        .get(cursor)
         .copied()
-        .find(|ch| !is_closing_punctuation(*ch))
-        .is_none_or(char::is_whitespace)
+        .is_some_and(is_closing_punctuation)
+    {
+        cursor += 1;
+    }
+    while chars.get(cursor).copied().is_some_and(char::is_whitespace) {
+        saw_spacing = true;
+        cursor += 1;
+    }
+
+    let Some(next) = chars.get(cursor).copied() else {
+        return true;
+    };
+    if next.is_lowercase() {
+        return false;
+    }
+    saw_spacing
 }
 
 fn is_decimal_point(chars: &[char], index: usize) -> bool {
@@ -1328,6 +1356,22 @@ mod tests {
         assert_eq!(
             split_sentences("Il dit: \"Bonjour.\" Elle hocha la tête."),
             vec!["Il dit: \"Bonjour.\"", "Elle hocha la tête."]
+        );
+    }
+
+    #[test]
+    fn keeps_quoted_dialogue_tags_inside_sentences() {
+        assert_eq!(
+            split_sentences("« Je vois... » dit-il. Elle partit."),
+            vec!["« Je vois... » dit-il.", "Elle partit."]
+        );
+    }
+
+    #[test]
+    fn keeps_ellipsis_continuations_inside_sentences() {
+        assert_eq!(
+            split_sentences("Je pensais... peut-être trop. Puis il bougea."),
+            vec!["Je pensais... peut-être trop.", "Puis il bougea."]
         );
     }
 
