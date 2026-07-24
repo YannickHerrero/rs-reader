@@ -192,6 +192,10 @@ impl App {
         Ok(())
     }
 
+    pub fn into_parts(self) -> (LibraryRepository, Box<dyn NovelSource>) {
+        (self.repo, self.source)
+    }
+
     pub async fn run_reader_only(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,

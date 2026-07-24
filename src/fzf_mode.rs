@@ -12,7 +12,7 @@ use crate::source::{NovelSource, SearchResult};
 
 pub async fn run(
     mut repo: LibraryRepository,
-    source: Box<dyn NovelSource>,
+    mut source: Box<dyn NovelSource>,
     text_layout: TextLayout,
 ) -> Result<()> {
     ensure_fzf()?;
@@ -24,16 +24,14 @@ pub async fn run(
         match choice.as_str() {
             "Library" => {
                 if let Some(chapter) = pick_library_chapter(&repo)? {
-                    open_reader(repo, source, text_layout, chapter).await?;
-                    return Ok(());
+                    (repo, source) = open_reader(repo, source, text_layout, chapter).await?;
                 }
             }
             "Search" => {
                 if let Some(chapter) =
                     search_add_and_pick_chapter(&mut repo, source.as_ref()).await?
                 {
-                    open_reader(repo, source, text_layout, chapter).await?;
-                    return Ok(());
+                    (repo, source) = open_reader(repo, source, text_layout, chapter).await?;
                 }
             }
             "Quit" => return Ok(()),
@@ -167,7 +165,7 @@ async fn open_reader(
     source: Box<dyn NovelSource>,
     text_layout: TextLayout,
     chapter: LibraryChapter,
-) -> Result<()> {
+) -> Result<(LibraryRepository, Box<dyn NovelSource>)> {
     let mut app = App::new(repo, source, text_layout)?;
 
     crossterm::terminal::enable_raw_mode()?;
@@ -185,7 +183,8 @@ async fn open_reader(
     )?;
     terminal.show_cursor()?;
 
-    result
+    result?;
+    Ok(app.into_parts())
 }
 
 fn fzf_select(prompt: &str, lines: &[impl AsRef<str>]) -> Result<Option<String>> {
